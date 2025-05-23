@@ -1,36 +1,68 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# 🎥 Video Analyzer (Web-Based with Next.js + Google Cloud)
 
-## Getting Started
+This project is a browser-based video analysis tool that uses the [Google Cloud Video Intelligence API](https://cloud.google.com/video-intelligence) to detect labels, speech, and other insights from uploaded video files.
 
-First, run the development server:
+Built with **Next.js** (React + API Routes) and **Google Cloud**, it provides an interactive frontend for uploading videos and displays AI-generated metadata such as objects, speech, timestamps, and more.
 
+---
+
+## 🧱 Tech Stack
+
+- **Frontend**: Next.js (React)
+- **Backend**: Next.js API routes
+- **Storage**: Google Cloud Storage (GCS)
+- **AI Analysis**: Cloud Video Intelligence API
+- **Language**: TypeScript
+
+---
+
+## 🚀 Features
+
+- Upload video files from the browser
+- Upload to Google Cloud Storage
+- Analyze video using Google Cloud Video Intelligence
+- Display:
+  - Object and scene labels
+  - Timestamps of detected segments
+  - Optional: Speech transcription, text in video, explicit content
+
+---
+
+## 🛠 Setup Instructions
+
+### Prerequisites
+
+1. Node.js and npm installed
+2. Google Cloud account with:
+   - Cloud Storage bucket
+   - Video Intelligence API enabled
+   - Service account with necessary permissions
+
+### Installation
+
+1. Clone the repository
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+git clone https://github.com/your-username/video-analyzer-web.git
+cd video-analyzer-web
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+2. Install dependencies
+```bash
+npm install
+```
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+3. Set up environment variables
+Create a `.env.local` file with:
+```
+GOOGLE_CLOUD_PROJECT_ID=video-analyzer-app-123456
+GOOGLE_CLOUD_STORAGE_BUCKET=video-analyzer-app-123456-videos
+```
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+4. Place your Google Cloud service account key file in the project root as `service-account.json`
 
-## Learn More
+5. Start the development server
+```bash
+npm run dev
+```
 
-To learn more about Next.js, take a look at the following resources:
-
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Visit `http://localhost:3000` to see the application.
