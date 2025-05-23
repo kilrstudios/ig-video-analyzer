@@ -110,11 +110,24 @@ export async function POST(request: NextRequest) {
     console.log('Starting video analysis...');
     const [operation] = await videoIntelligence.annotateVideo({
       inputUri: gcsUri,
-      features: ['LABEL_DETECTION', 'SHOT_CHANGE_DETECTION'],
+      features: [
+        'LABEL_DETECTION',
+        'SHOT_CHANGE_DETECTION',
+        'SPEECH_TRANSCRIPTION',
+        'TEXT_DETECTION',
+        'EXPLICIT_CONTENT_DETECTION'
+      ],
       videoContext: {
         labelDetectionConfig: {
           labelDetectionMode: 'SHOT_AND_FRAME_MODE',
           stationaryCamera: false,
+        },
+        speechTranscriptionConfig: {
+          languageCode: 'en-US',
+          enableAutomaticPunctuation: true,
+        },
+        textDetectionConfig: {
+          languageHints: ['en'],
         },
       },
     });
@@ -129,6 +142,11 @@ export async function POST(request: NextRequest) {
 
     // Process and return results
     const labels = response.annotationResults?.[0]?.shotLabelAnnotations || [];
+    const shots = response.annotationResults?.[0]?.shotAnnotations || [];
+    const speechTranscriptions = response.annotationResults?.[0]?.speechTranscriptions || [];
+    const textAnnotations = response.annotationResults?.[0]?.textAnnotations || [];
+    const explicitAnnotations = response.annotationResults?.[0]?.explicitAnnotation?.frames || [];
+
     const processedLabels = labels.map((label: any) => ({
       description: label.entity?.description || '',
       confidence: label.segments?.[0]?.confidence || 0,
@@ -138,7 +156,73 @@ export async function POST(request: NextRequest) {
       })),
     }));
 
-    return NextResponse.json({ labels: processedLabels });
+    // Process shots with additional context
+    const processedShots = shots.map((shot: any, index: number) => {
+      const startTime = Math.floor(shot.startTimeOffset?.seconds || 0);
+      const endTime = Math.floor(shot.endTimeOffset?.seconds || 0);
+      
+      // Find labels active during this shot
+      const shotLabels = labels
+        .filter((label: any) => {
+          const labelSegments = label.segments || [];
+          return labelSegments.some((segment: any) => {
+            const segmentStart = Math.floor(segment.segment?.startTimeOffset?.seconds || 0);
+            const segmentEnd = Math.floor(segment.segment?.endTimeOffset?.seconds || 0);
+            return segmentStart <= endTime && segmentEnd >= startTime;
+          });
+        })
+        .map((label: any) => label.entity?.description)
+        .filter(Boolean);
+
+      // Find speech during this shot
+      const shotSpeech = speechTranscriptions
+        .flatMap((transcription: any) => transcription.alternatives?.[0]?.words || [])
+        .filter((word: any) => {
+          const wordStart = Math.floor(word.startTime?.seconds || 0);
+          const wordEnd = Math.floor(word.endTime?.seconds || 0);
+          return wordStart >= startTime && wordEnd <= endTime;
+        })
+        .map((word: any) => word.word)
+        .join(' ');
+
+      // Find text annotations during this shot
+      const shotText = textAnnotations
+        .filter((text: any) => {
+          const textStart = Math.floor(text.segments?.[0]?.segment?.startTimeOffset?.seconds || 0);
+          const textEnd = Math.floor(text.segments?.[0]?.segment?.endTimeOffset?.seconds || 0);
+          return textStart >= startTime && textEnd <= endTime;
+        })
+        .map((text: any) => text.text)
+        .join(' ');
+
+      // Find explicit content during this shot
+      const shotExplicitContent = explicitAnnotations
+        .filter((frame: any) => {
+          const frameTime = Math.floor(frame.timeOffset?.seconds || 0);
+          return frameTime >= startTime && frameTime <= endTime;
+        })
+        .map((frame: any) => frame.pornographyLikelihood)
+        .filter((likelihood: string) => likelihood !== 'UNLIKELY' && likelihood !== 'VERY_UNLIKELY');
+
+      return {
+        startTime: `${startTime}s`,
+        endTime: `${endTime}s`,
+        confidence: shot.confidence || 0,
+        frameRate: shot.frameRate || 0,
+        duration: `${endTime - startTime}s`,
+        composition: {
+          labels: shotLabels,
+          speech: shotSpeech || null,
+          onScreenText: shotText || null,
+          contentWarnings: shotExplicitContent.length > 0 ? shotExplicitContent : null
+        }
+      };
+    });
+
+    return NextResponse.json({
+      labels: processedLabels,
+      shots: processedShots
+    });
   } catch (error) {
     console.error('Full error details:', error);
     

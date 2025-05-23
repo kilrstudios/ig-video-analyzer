@@ -59,6 +59,7 @@ export default function Home() {
 
         <VideoAnalysis
           labels={analysisResults?.labels || []}
+          shots={analysisResults?.shots || []}
           isLoading={isAnalyzing}
         />
       </div>
