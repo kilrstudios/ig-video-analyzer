@@ -1,23 +1,36 @@
-import { Storage } from '@google-cloud/storage';
-import { VideoIntelligenceServiceClient } from '@google-cloud/video-intelligence';
 import { NextRequest, NextResponse } from 'next/server';
 import { exec } from 'child_process';
 import { promisify } from 'util';
 import fs from 'fs';
 import path from 'path';
+import OpenAI from 'openai';
 
 const execAsync = promisify(exec);
-
-const storage = new Storage({
-  projectId: process.env.GOOGLE_CLOUD_PROJECT_ID,
-  keyFilename: 'service-account.json',
+const openai = new OpenAI({
+  apiKey: process.env.OPENAI_API_KEY
 });
 
-const videoIntelligence = new VideoIntelligenceServiceClient({
-  keyFilename: 'service-account.json',
-});
-
-const bucket = storage.bucket(process.env.GOOGLE_CLOUD_STORAGE_BUCKET || '');
+interface UIVideoAnalysis {
+  contentStructure: string;
+  hook: string;
+  duration: string;
+  shots: {
+    type: string;
+    duration: string;
+    description: string;
+  }[];
+  effects: {
+    name: string;
+    description: string;
+    timestamps: string[];
+  }[];
+  music: {
+    genre: string;
+    bpm: number;
+    energy: string;
+    mood: string;
+  };
+}
 
 async function downloadVideo(url: string): Promise<string> {
   try {
@@ -52,6 +65,198 @@ async function downloadVideo(url: string): Promise<string> {
   }
 }
 
+async function extractFrames(videoPath: string): Promise<string[]> {
+  const framesDir = path.join(process.cwd(), 'temp', 'frames');
+  if (!fs.existsSync(framesDir)) {
+    fs.mkdirSync(framesDir, { recursive: true });
+  }
+
+  // Get video duration
+  const { stdout: durationOutput } = await execAsync(
+    `ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "${videoPath}"`
+  );
+  const duration = parseFloat(durationOutput);
+
+  // Extract one frame every second
+  const outputPattern = path.join(framesDir, 'frame-%d.jpg');
+  await execAsync(`ffmpeg -i "${videoPath}" -vf fps=1 "${outputPattern}"`);
+
+  // Get list of extracted frames
+  const frames = fs.readdirSync(framesDir)
+    .filter(file => file.startsWith('frame-') && file.endsWith('.jpg'))
+    .map(file => path.join(framesDir, file))
+    .sort((a, b) => {
+      const aNum = parseInt(a.match(/frame-(\d+)\.jpg/)?.[1] || '0');
+      const bNum = parseInt(b.match(/frame-(\d+)\.jpg/)?.[1] || '0');
+      return aNum - bNum;
+    });
+
+  return frames;
+}
+
+async function extractAudio(videoPath: string): Promise<string> {
+  const audioPath = path.join(process.cwd(), 'temp', `${Date.now()}.mp3`);
+  await execAsync(`ffmpeg -i "${videoPath}" -q:a 0 -map a "${audioPath}"`);
+  return audioPath;
+}
+
+async function analyzeFrame(framePath: string): Promise<any> {
+  const image = fs.readFileSync(framePath);
+  const base64Image = Buffer.from(image).toString('base64');
+
+  const response = await openai.chat.completions.create({
+    model: "gpt-4o-mini",
+    messages: [
+      {
+        role: "user",
+        content: [
+          {
+            type: "text",
+            text: "Analyze this frame and provide:\n1. Shot type (close-up, medium, wide, etc)\n2. Main visual elements\n3. Any text overlays\n4. Visual effects or transitions\n5. Overall composition and purpose"
+          },
+          {
+            type: "image_url",
+            image_url: {
+              url: `data:image/jpeg;base64,${base64Image}`
+            }
+          }
+        ]
+      }
+    ],
+    max_tokens: 500
+  });
+
+  return response.choices[0].message.content;
+}
+
+async function analyzeAudio(audioPath: string): Promise<any> {
+  const audioFile = fs.createReadStream(audioPath);
+  
+  // First, transcribe the audio
+  const transcription = await openai.audio.transcriptions.create({
+    file: audioFile,
+    model: "whisper-1",
+    response_format: "verbose_json",
+    timestamp_granularities: ["segment"]
+  });
+
+  // Then, analyze the transcription and audio characteristics
+  const analysis = await openai.chat.completions.create({
+    model: "gpt-4",
+    messages: [
+      {
+        role: "user",
+        content: `Analyze this audio transcription and provide:\n1. Music genre and style\n2. Estimated BPM\n3. Energy level\n4. Overall mood\n\nTranscription: ${JSON.stringify(transcription)}`
+      }
+    ]
+  });
+
+  return {
+    transcription,
+    analysis: analysis.choices[0].message.content
+  };
+}
+
+async function analyzeVideo(videoPath: string): Promise<UIVideoAnalysis> {
+  // Extract frames and audio
+  const frames = await extractFrames(videoPath);
+  const audioPath = await extractAudio(videoPath);
+
+  // Analyze frames
+  const frameAnalyses = await Promise.all(
+    frames.map(frame => analyzeFrame(frame))
+  );
+
+  // Analyze audio
+  const audioAnalysis = await analyzeAudio(audioPath);
+
+  // Clean up frames and audio
+  frames.forEach(frame => fs.unlinkSync(frame));
+  fs.unlinkSync(audioPath);
+
+  // Process frame analyses to detect shots and effects
+  const shots = frameAnalyses.map((analysis, index) => {
+    const duration = '1s'; // Each frame represents 1 second
+    return {
+      type: extractShotType(analysis),
+      duration,
+      description: extractDescription(analysis)
+    };
+  });
+
+  const effects = detectEffects(frameAnalyses);
+  const music = parseMusicAnalysis(audioAnalysis.analysis);
+  const contentStructure = generateContentStructure(frameAnalyses, audioAnalysis);
+
+  return {
+    contentStructure,
+    hook: extractHook(frameAnalyses[0]),
+    duration: `${frames.length}s`,
+    shots,
+    effects,
+    music
+  };
+}
+
+function extractShotType(analysis: string): string {
+  // Extract shot type from GPT-4 Vision analysis
+  const shotTypes = ['close-up', 'medium shot', 'wide shot', 'extreme close-up', 'long shot'];
+  const match = shotTypes.find(type => analysis.toLowerCase().includes(type));
+  return match ? match.charAt(0).toUpperCase() + match.slice(1) : 'Medium Shot';
+}
+
+function extractDescription(analysis: string): string {
+  // Extract main visual elements and text overlays
+  return analysis.split('\n')
+    .filter(line => line.includes('visual elements') || line.includes('text overlay'))
+    .join(' ');
+}
+
+function detectEffects(frameAnalyses: string[]): any[] {
+  const effects = [];
+  
+  frameAnalyses.forEach((analysis, index) => {
+    if (analysis.toLowerCase().includes('effect') || analysis.toLowerCase().includes('transition')) {
+      effects.push({
+        name: 'Visual Effect',
+        description: analysis.split('\n').find(line => line.toLowerCase().includes('effect'))?.trim() || 'Visual transition',
+        timestamps: [`${index}s`]
+      });
+    }
+  });
+
+  return effects;
+}
+
+function parseMusicAnalysis(analysis: string): any {
+  // Parse the GPT-4 analysis of audio
+  const lines = analysis.split('\n');
+  return {
+    genre: lines.find(line => line.includes('genre'))?.split(':')[1]?.trim() || 'Background Music',
+    bpm: parseInt(lines.find(line => line.includes('BPM'))?.split(':')[1]?.trim() || '120'),
+    energy: lines.find(line => line.includes('Energy'))?.split(':')[1]?.trim() || 'Medium',
+    mood: lines.find(line => line.includes('mood'))?.split(':')[1]?.trim() || 'Neutral'
+  };
+}
+
+function generateContentStructure(frameAnalyses: string[], audioAnalysis: any): string {
+  // Combine frame and audio analyses to generate content structure
+  const visualElements = new Set(frameAnalyses.flatMap(analysis => 
+    analysis.split('\n')
+      .filter(line => line.includes('visual elements') || line.includes('purpose'))
+      .map(line => line.split(':')[1]?.trim())
+      .filter(Boolean)
+  ));
+
+  return Array.from(visualElements).join('. ');
+}
+
+function extractHook(firstFrameAnalysis: string): string {
+  // Extract hook from the first frame analysis
+  return firstFrameAnalysis.split('\n')
+    .find(line => line.includes('purpose'))?.split(':')[1]?.trim() || 'Visual opening hook';
+}
+
 async function cleanupFile(filePath: string) {
   try {
     if (fs.existsSync(filePath)) {
@@ -78,151 +283,17 @@ export async function POST(request: NextRequest) {
 
     console.log('Processing request for URL:', url);
 
-    // Download video using yt-dlp
+    // Download video
     downloadedFilePath = await downloadVideo(url);
     console.log('Video downloaded to:', downloadedFilePath);
 
-    // Read the downloaded file
-    const videoBuffer = fs.readFileSync(downloadedFilePath);
-    console.log('Video file read into buffer');
+    // Analyze video using OpenAI
+    const analysis = await analyzeVideo(downloadedFilePath);
 
-    // Upload to GCS
-    const filename = `uploads/${Date.now()}-video.mp4`;
-    const file = bucket.file(filename);
-    
-    console.log('Uploading to GCS:', filename);
-    await file.save(videoBuffer, {
-      metadata: {
-        contentType: 'video/mp4',
-      },
-    });
-    console.log('Successfully uploaded to GCS');
-
-    // Clean up the downloaded file
+    // Clean up
     await cleanupFile(downloadedFilePath);
-    downloadedFilePath = null;
 
-    // Get the GCS URI for the uploaded file
-    const gcsUri = `gs://${process.env.GOOGLE_CLOUD_STORAGE_BUCKET}/${filename}`;
-    console.log('GCS URI:', gcsUri);
-
-    // Start video analysis
-    console.log('Starting video analysis...');
-    const [operation] = await videoIntelligence.annotateVideo({
-      inputUri: gcsUri,
-      features: [
-        'LABEL_DETECTION',
-        'SHOT_CHANGE_DETECTION',
-        'SPEECH_TRANSCRIPTION',
-        'TEXT_DETECTION',
-        'EXPLICIT_CONTENT_DETECTION'
-      ],
-      videoContext: {
-        labelDetectionConfig: {
-          labelDetectionMode: 'SHOT_AND_FRAME_MODE',
-          stationaryCamera: false,
-        },
-        speechTranscriptionConfig: {
-          languageCode: 'en-US',
-          enableAutomaticPunctuation: true,
-        },
-        textDetectionConfig: {
-          languageHints: ['en'],
-        },
-      },
-    });
-
-    console.log('Waiting for analysis to complete...');
-    const [response] = await operation.promise();
-    console.log('Analysis completed');
-    
-    // Clean up - delete the uploaded video from GCS
-    await file.delete();
-    console.log('Deleted uploaded video from GCS:', filename);
-
-    // Process and return results
-    const labels = response.annotationResults?.[0]?.shotLabelAnnotations || [];
-    const shots = response.annotationResults?.[0]?.shotAnnotations || [];
-    const speechTranscriptions = response.annotationResults?.[0]?.speechTranscriptions || [];
-    const textAnnotations = response.annotationResults?.[0]?.textAnnotations || [];
-    const explicitAnnotations = response.annotationResults?.[0]?.explicitAnnotation?.frames || [];
-
-    const processedLabels = labels.map((label: any) => ({
-      description: label.entity?.description || '',
-      confidence: label.segments?.[0]?.confidence || 0,
-      segments: (label.segments || []).map((segment: any) => ({
-        startTime: `${Math.floor(segment.segment?.startTimeOffset?.seconds || 0)}s`,
-        endTime: `${Math.floor(segment.segment?.endTimeOffset?.seconds || 0)}s`,
-      })),
-    }));
-
-    // Process shots with additional context
-    const processedShots = shots.map((shot: any, index: number) => {
-      const startTime = Math.floor(shot.startTimeOffset?.seconds || 0);
-      const endTime = Math.floor(shot.endTimeOffset?.seconds || 0);
-      
-      // Find labels active during this shot
-      const shotLabels = labels
-        .filter((label: any) => {
-          const labelSegments = label.segments || [];
-          return labelSegments.some((segment: any) => {
-            const segmentStart = Math.floor(segment.segment?.startTimeOffset?.seconds || 0);
-            const segmentEnd = Math.floor(segment.segment?.endTimeOffset?.seconds || 0);
-            return segmentStart <= endTime && segmentEnd >= startTime;
-          });
-        })
-        .map((label: any) => label.entity?.description)
-        .filter(Boolean);
-
-      // Find speech during this shot
-      const shotSpeech = speechTranscriptions
-        .flatMap((transcription: any) => transcription.alternatives?.[0]?.words || [])
-        .filter((word: any) => {
-          const wordStart = Math.floor(word.startTime?.seconds || 0);
-          const wordEnd = Math.floor(word.endTime?.seconds || 0);
-          return wordStart >= startTime && wordEnd <= endTime;
-        })
-        .map((word: any) => word.word)
-        .join(' ');
-
-      // Find text annotations during this shot
-      const shotText = textAnnotations
-        .filter((text: any) => {
-          const textStart = Math.floor(text.segments?.[0]?.segment?.startTimeOffset?.seconds || 0);
-          const textEnd = Math.floor(text.segments?.[0]?.segment?.endTimeOffset?.seconds || 0);
-          return textStart >= startTime && textEnd <= endTime;
-        })
-        .map((text: any) => text.text)
-        .join(' ');
-
-      // Find explicit content during this shot
-      const shotExplicitContent = explicitAnnotations
-        .filter((frame: any) => {
-          const frameTime = Math.floor(frame.timeOffset?.seconds || 0);
-          return frameTime >= startTime && frameTime <= endTime;
-        })
-        .map((frame: any) => frame.pornographyLikelihood)
-        .filter((likelihood: string) => likelihood !== 'UNLIKELY' && likelihood !== 'VERY_UNLIKELY');
-
-      return {
-        startTime: `${startTime}s`,
-        endTime: `${endTime}s`,
-        confidence: shot.confidence || 0,
-        frameRate: shot.frameRate || 0,
-        duration: `${endTime - startTime}s`,
-        composition: {
-          labels: shotLabels,
-          speech: shotSpeech || null,
-          onScreenText: shotText || null,
-          contentWarnings: shotExplicitContent.length > 0 ? shotExplicitContent : null
-        }
-      };
-    });
-
-    return NextResponse.json({
-      labels: processedLabels,
-      shots: processedShots
-    });
+    return NextResponse.json(analysis);
   } catch (error) {
     console.error('Full error details:', error);
     
