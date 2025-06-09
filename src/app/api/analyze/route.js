@@ -10,29 +10,7 @@ const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY
 });
 
-interface UIVideoAnalysis {
-  contentStructure: string;
-  hook: string;
-  duration: string;
-  shots: {
-    type: string;
-    duration: string;
-    description: string;
-  }[];
-  effects: {
-    name: string;
-    description: string;
-    timestamps: string[];
-  }[];
-  music: {
-    genre: string;
-    bpm: number;
-    energy: string;
-    mood: string;
-  };
-}
-
-async function downloadVideo(url: string): Promise<string> {
+async function downloadVideo(url) {
   try {
     console.log('Downloading video from:', url);
     
@@ -65,7 +43,7 @@ async function downloadVideo(url: string): Promise<string> {
   }
 }
 
-async function extractFrames(videoPath: string): Promise<string[]> {
+async function extractFrames(videoPath) {
   const framesDir = path.join(process.cwd(), 'temp', 'frames');
   if (!fs.existsSync(framesDir)) {
     fs.mkdirSync(framesDir, { recursive: true });
@@ -94,13 +72,13 @@ async function extractFrames(videoPath: string): Promise<string[]> {
   return frames;
 }
 
-async function extractAudio(videoPath: string): Promise<string> {
+async function extractAudio(videoPath) {
   const audioPath = path.join(process.cwd(), 'temp', `${Date.now()}.mp3`);
   await execAsync(`ffmpeg -i "${videoPath}" -q:a 0 -map a "${audioPath}"`);
   return audioPath;
 }
 
-async function analyzeFrame(framePath: string): Promise<any> {
+async function analyzeFrame(framePath) {
   const image = fs.readFileSync(framePath);
   const base64Image = Buffer.from(image).toString('base64');
 
@@ -129,7 +107,7 @@ async function analyzeFrame(framePath: string): Promise<any> {
   return response.choices[0].message.content;
 }
 
-async function analyzeAudio(audioPath: string): Promise<any> {
+async function analyzeAudio(audioPath) {
   const audioFile = fs.createReadStream(audioPath);
   
   // First, transcribe the audio
@@ -157,7 +135,7 @@ async function analyzeAudio(audioPath: string): Promise<any> {
   };
 }
 
-async function analyzeVideo(videoPath: string): Promise<UIVideoAnalysis> {
+async function analyzeVideo(videoPath) {
   // Extract frames and audio
   const frames = await extractFrames(videoPath);
   const audioPath = await extractAudio(videoPath);
@@ -198,21 +176,21 @@ async function analyzeVideo(videoPath: string): Promise<UIVideoAnalysis> {
   };
 }
 
-function extractShotType(analysis: string): string {
+function extractShotType(analysis) {
   // Extract shot type from GPT-4 Vision analysis
   const shotTypes = ['close-up', 'medium shot', 'wide shot', 'extreme close-up', 'long shot'];
   const match = shotTypes.find(type => analysis.toLowerCase().includes(type));
   return match ? match.charAt(0).toUpperCase() + match.slice(1) : 'Medium Shot';
 }
 
-function extractDescription(analysis: string): string {
+function extractDescription(analysis) {
   // Extract main visual elements and text overlays
   return analysis.split('\n')
     .filter(line => line.includes('visual elements') || line.includes('text overlay'))
     .join(' ');
 }
 
-function detectEffects(frameAnalyses: string[]): any[] {
+function detectEffects(frameAnalyses) {
   const effects = [];
   
   frameAnalyses.forEach((analysis, index) => {
@@ -228,7 +206,7 @@ function detectEffects(frameAnalyses: string[]): any[] {
   return effects;
 }
 
-function parseMusicAnalysis(analysis: string): any {
+function parseMusicAnalysis(analysis) {
   // Parse the GPT-4 analysis of audio
   const lines = analysis.split('\n');
   return {
@@ -239,7 +217,7 @@ function parseMusicAnalysis(analysis: string): any {
   };
 }
 
-function generateContentStructure(frameAnalyses: string[], audioAnalysis: any): string {
+function generateContentStructure(frameAnalyses, audioAnalysis) {
   // Combine frame and audio analyses to generate content structure
   const visualElements = new Set(frameAnalyses.flatMap(analysis => 
     analysis.split('\n')
@@ -248,63 +226,57 @@ function generateContentStructure(frameAnalyses: string[], audioAnalysis: any): 
       .filter(Boolean)
   ));
 
-  return Array.from(visualElements).join('. ');
+  const audioMood = audioAnalysis.analysis ? parseMusicAnalysis(audioAnalysis.analysis).mood : 'N/A';
+  
+  return `This video has a ${audioMood} mood, featuring visual elements such as: ${Array.from(visualElements).join(', ')}.`;
 }
 
-function extractHook(firstFrameAnalysis: string): string {
-  // Extract hook from the first frame analysis
-  return firstFrameAnalysis.split('\n')
-    .find(line => line.includes('purpose'))?.split(':')[1]?.trim() || 'Visual opening hook';
+function extractHook(firstFrameAnalysis) {
+  // Extract hook from the first frame's analysis
+  const purposeLine = firstFrameAnalysis.split('\n').find(line => line.includes('purpose'));
+  return purposeLine ? purposeLine.split(':')[1]?.trim() : 'Engaging opening';
 }
 
-async function cleanupFile(filePath: string) {
+async function cleanupFile(filePath) {
   try {
     if (fs.existsSync(filePath)) {
       fs.unlinkSync(filePath);
-      console.log('Cleaned up file:', filePath);
+      console.log('Cleaned up:', filePath);
     }
   } catch (error) {
-    console.error('Error cleaning up file:', error);
+    console.error('Cleanup error:', error);
   }
 }
 
-export async function POST(request: NextRequest) {
-  let downloadedFilePath: string | null = null;
-  
+export async function POST(request) {
+  let videoPath = '';
   try {
     const { url } = await request.json();
-    
     if (!url) {
-      return NextResponse.json(
-        { error: 'No video URL provided' },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: 'URL is required' }, { status: 400 });
     }
 
-    console.log('Processing request for URL:', url);
-
-    // Download video
-    downloadedFilePath = await downloadVideo(url);
-    console.log('Video downloaded to:', downloadedFilePath);
-
-    // Analyze video using OpenAI
-    const analysis = await analyzeVideo(downloadedFilePath);
-
-    // Clean up
-    await cleanupFile(downloadedFilePath);
-
+    videoPath = await downloadVideo(url);
+    const analysis = await analyzeVideo(videoPath);
+    
+    // Final cleanup
+    await cleanupFile(videoPath);
+    
     return NextResponse.json(analysis);
   } catch (error) {
-    console.error('Full error details:', error);
+    console.error('API Error:', error);
     
-    // Clean up downloaded file if it exists
-    if (downloadedFilePath) {
-      await cleanupFile(downloadedFilePath);
+    // Ensure cleanup even on error
+    if (videoPath) {
+      await cleanupFile(videoPath);
+    }
+
+    // Clean up frames directory if it exists
+    const framesDir = path.join(process.cwd(), 'temp', 'frames');
+    if (fs.existsSync(framesDir)) {
+      fs.rmSync(framesDir, { recursive: true, force: true });
     }
     
-    return NextResponse.json(
-      { error: `Failed to analyze video: ${error.message}` },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: 'Failed to analyze video', details: error.message }, { status: 500 });
   }
-} 
+}

@@ -1,0 +1,34 @@
+# See https://help.docker.com/engine/reference/builder/#dockerignore-file
+
+# Dependency directories
+node_modules
+.npm
+
+# Next.js build artifacts and cache
+.next
+.vercel
+
+# Local development files
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+*.log
+.env*.local
+.env
+
+# Test files
+coverage
+
+# Git and other version control
+.git
+.gitignore
+
+# Docker files
+Dockerfile
+.dockerignore
+
+# Editor and OS specific
+.vscode
+.idea
+.DS_Store
+*.swp 
