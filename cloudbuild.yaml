@@ -1,0 +1,15 @@
+steps:
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'build'
+      - '-t'
+      - 'us-west1-docker.pkg.dev/video-analyzer-app-123456/ig-video-analyzer-repo/ig-video-analyzer'
+      - '--build-arg'
+      - 'OPENAI_API_KEY=${_OPENAI_API_KEY}'
+      - '.'
+
+images:
+  - 'us-west1-docker.pkg.dev/video-analyzer-app-123456/ig-video-analyzer-repo/ig-video-analyzer'
+
+substitutions:
+  _OPENAI_API_KEY: ''  # This will be provided during the build 

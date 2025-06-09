@@ -18,36 +18,31 @@ RUN pip3 install --no-cache-dir --break-system-packages yt-dlp
 WORKDIR /app
 
 # Add a non-root user for security purposes.
-# Running as a non-root user is a critical security best practice.
+# Running as a non-root user is a security best practice.
 RUN addgroup --system --gid 1001 nextjs
 RUN adduser --system --uid 1001 nextjs
 
-# Copy dependency definition files first to leverage Docker's build cache.
+# Copy dependency definition files.
 COPY --chown=nextjs:nextjs package.json package-lock.json* ./
 
-# Install Node.js dependencies using 'npm ci' which is faster and more reliable for builds.
+# Install dependencies.
 RUN npm ci
 
-# Copy the rest of the application source code into the container.
-# This includes the public folder, the src folder, next.config.js, etc.
+# Copy the rest of the application code.
 COPY --chown=nextjs:nextjs . .
 
-# Set a build-time argument for the OpenAI API key. This is NOT for the final image.
-# It's a placeholder in case the build process ever needs it.
+# Set build-time argument for OpenAI API key
 ARG OPENAI_API_KEY
+ENV OPENAI_API_KEY=${OPENAI_API_KEY}
 
-# Build the Next.js application.
+# Build the application
 RUN npm run build
 
 # Switch to the non-root user for running the application.
 USER nextjs
 
-# Expose the port the app will run on.
+# Expose the port the app runs on.
 EXPOSE 3000
 
-# Set the PORT environment variable. Next.js will bind to this port.
-ENV PORT 3000
-
-# The command to start the application.
-# 'npm start' will execute 'next start' as defined in package.json.
+# Start the application.
 CMD ["npm", "start"] 

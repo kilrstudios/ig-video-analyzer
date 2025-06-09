@@ -53,6 +53,26 @@ interface ShotAnalysis {
   };
 }
 
+interface Shot {
+  type: string;
+  duration: string;
+  description: string;
+  hook?: string;
+}
+
+interface Effect {
+  type: string;
+  description: string;
+  name: string;
+}
+
+interface Music {
+  genre: string;
+  bpm: number;
+  energy: string;
+  mood: string;
+}
+
 interface VideoAnalysis {
   title: string;
   duration: string;
@@ -63,6 +83,7 @@ interface VideoAnalysis {
     pacing: string;
   };
   shots: ShotAnalysis[];
+  contentStructure?: string;
 }
 
 export async function analyzeVideo(videoUrl: string): Promise<VideoAnalysis> {
@@ -107,7 +128,8 @@ async function downloadVideo(url: string, workDir: string): Promise<string> {
 }
 
 async function transcribeAudio(audioPath: string): Promise<string> {
-  const audioFile = await fs.readFile(audioPath);
+  const audioBuffer = await fs.readFile(audioPath);
+  const audioFile = new File([audioBuffer], 'audio.m4a', { type: 'audio/m4a' });
   const response = await openai.audio.transcriptions.create({
     file: audioFile,
     model: 'whisper-1',
@@ -188,7 +210,7 @@ async function batchAnalyzeFrames(
   for (const batch of batches) {
     const images = await Promise.all(
       batch.map(async frame => ({
-        type: 'image_url',
+        type: 'image_url' as const,
         image_url: {
           url: `data:image/jpeg;base64,${await fs.readFile(frame.path, 'base64')}`,
         },
@@ -196,7 +218,7 @@ async function batchAnalyzeFrames(
     );
 
     const response = await openai.chat.completions.create({
-      model: 'gpt-4o-mini',
+      model: 'gpt-4-vision-preview',
       messages: [
         {
           role: 'system',
@@ -247,7 +269,7 @@ Provide a detailed analysis of the shot composition, visual style, audio element
       max_tokens: 1000,
     });
 
-    const analysis = response.choices[0].message.content;
+    const analysis = response.choices[0].message.content || '';
     shots.push(parseAnalysis(analysis, batch[0].timestamp));
     // Add a delay to avoid rate limits
     await new Promise(r => setTimeout(r, 2000));
@@ -275,7 +297,7 @@ Provide a detailed analysis of the shot composition, visual style, audio element
   return {
     title: 'Video Analysis', // Could be customized
     duration: `${Math.max(...frames.map(f => f.timestamp))}s`,
-    overallStyle: parseOverallStyle(overallAnalysis.choices[0].message.content),
+    overallStyle: parseOverallStyle(overallAnalysis.choices[0].message.content || ''),
     shots,
   };
 }
@@ -355,27 +377,17 @@ function getTranscriptSegment(transcript: string, startTime: number, endTime: nu
 }
 
 function parseAnalysisForUI(shots: ShotAnalysis[]): VideoAnalysis {
-  // Content Structure Analysis
-  const contentStructure = analyzeContentStructure(shots);
-  const hook = identifyHook(shots[0]);
-  const duration = `${Math.max(...shots.map(s => parseFloat(s.timestamp)))}s`;
-
-  // Shot Composition Analysis
-  const compositionShots = analyzeShots(shots);
-
-  // Editing Effects Analysis
-  const effects = analyzeEditingEffects(shots);
-
-  // Music Analysis
-  const music = analyzeMusicElements(shots);
-
   return {
-    contentStructure,
-    hook,
-    duration,
-    shots: compositionShots,
-    effects,
-    music
+    title: 'Video Analysis',
+    duration: `${Math.max(...shots.map(s => parseFloat(s.timestamp)))}s`,
+    overallStyle: {
+      visualTheme: analyzeContentStructure(shots),
+      editingStyle: analyzeEditingEffects(shots).map(e => e.description).join(', '),
+      musicStyle: identifyMusicGenre(shots),
+      pacing: calculateAverageBPM(shots).toString(),
+    },
+    shots,
+    contentStructure: analyzeContentStructure(shots),
   };
 }
 
@@ -403,58 +415,89 @@ function analyzeContentStructure(shots: ShotAnalysis[]): string {
   return structure.join('. ');
 }
 
-function analyzeShots(shots: ShotAnalysis[]): Shot[] {
-  return shots.map(shot => {
-    const type = determineShortType(shot);
-    const duration = calculateDuration(shot);
-    const description = generateShotDescription(shot);
-
-    return {
-      type,
-      duration,
-      description
-    };
-  });
-}
-
 function analyzeEditingEffects(shots: ShotAnalysis[]): Effect[] {
   const effects: Effect[] = [];
   
-  // Look for specific editing techniques
-  for (const shot of shots) {
-    if (shot.editingTechniques?.transitions?.length) {
-      effects.push({
-        name: 'Transitions',
-        description: shot.editingTechniques.transitions.join(', '),
-        timestamps: [shot.timestamp]
-      });
-    }
-    
-    if (shot.editingTechniques?.effects?.length) {
-      effects.push({
-        name: 'Visual Effects',
-        description: shot.editingTechniques.effects.join(', '),
-        timestamps: [shot.timestamp]
-      });
-    }
+  // Analyze transitions
+  const transitions = shots
+    .map(shot => shot.editingTechniques?.transitions || [])
+    .flat()
+    .filter(Boolean);
+  
+  if (transitions.length > 0) {
+    effects.push({
+      type: 'transition',
+      description: transitions.join(', '),
+      name: 'Transitions'
+    });
   }
-
+  
+  // Analyze visual effects
+  const visualEffects = shots
+    .map(shot => shot.editingTechniques?.effects || [])
+    .flat()
+    .filter(Boolean);
+  
+  if (visualEffects.length > 0) {
+    effects.push({
+      type: 'effect',
+      description: visualEffects.join(', '),
+      name: 'Visual Effects'
+    });
+  }
+  
   return effects;
 }
 
-function analyzeMusicElements(shots: ShotAnalysis[]): Music {
-  // Extract music information from audio elements
-  const musicShots = shots.filter(shot => shot.audioElements?.musicStyle);
+function identifyMusicGenre(shots: ShotAnalysis[]): string {
+  const musicStyles = shots
+    .map(shot => shot.audioElements?.musicStyle)
+    .filter((style): style is string => style !== null && style !== undefined);
   
-  return {
-    genre: identifyMusicGenre(musicShots),
-    bpm: calculateAverageBPM(musicShots),
-    energy: assessMusicEnergy(musicShots),
-    mood: determineMusicMood(musicShots)
-  };
+  if (musicStyles.length === 0) return 'No music detected';
+  
+  // Count occurrences of each genre
+  const genreCounts: Record<string, number> = {};
+  musicStyles.forEach(style => {
+    const genre = style.toLowerCase();
+    genreCounts[genre] = (genreCounts[genre] || 0) + 1;
+  });
+  
+  // Find the most common genre
+  const mostCommonGenre = Object.entries(genreCounts)
+    .sort(([, a], [, b]) => b - a)[0];
+  
+  return mostCommonGenre ? mostCommonGenre[0] : 'Unknown genre';
 }
 
-// Helper functions
+function calculateAverageBPM(shots: ShotAnalysis[]): number {
+  const bpmValues = shots
+    .map(shot => {
+      const musicStyle = shot.audioElements?.musicStyle;
+      if (!musicStyle) return null;
+      
+      const bpmMatch = musicStyle.match(/(\d+)\s*BPM/i);
+      return bpmMatch ? parseInt(bpmMatch[1], 10) : null;
+    })
+    .filter((bpm): bpm is number => bpm !== null);
+  
+  if (bpmValues.length === 0) return 0;
+  
+  const sum = bpmValues.reduce((acc, bpm) => acc + bpm, 0);
+  return Math.round(sum / bpmValues.length);
+}
+
+function identifyHook(shot: ShotAnalysis): string {
+  const text = shot.visualElements?.graphicElements?.join(' ') || '';
+  const purpose = shot.purpose?.narrative || '';
+  
+  if (text || purpose) {
+    return `${text} ${purpose}`.trim();
+  }
+  
+  return 'Attention-grabbing opening shot';
+}
+
 function determineShortType(shot: ShotAnalysis): string {
   if (shot.visualElements?.mainSubject?.includes('face')) return 'Close-up';
   if (shot.visualElements?.mainSubject?.includes('software')) return 'Screen Recording';
@@ -472,51 +515,6 @@ function generateShotDescription(shot: ShotAnalysis): string {
 }
 
 // ... rest of the helper functions for music analysis ...
-
-function identifyHook(shot: ShotAnalysis): string {
-  const text = shot.visualElements?.graphicElements?.join(' ') || '';
-  const purpose = shot.purpose?.narrative || '';
-  
-  if (text || purpose) {
-    return `${text} ${purpose}`.trim();
-  }
-  
-  return 'Attention-grabbing opening shot';
-}
-
-function identifyMusicGenre(shots: ShotAnalysis[]): string {
-  const musicStyles = shots
-    .map(shot => shot.audioElements?.musicStyle)
-    .filter(Boolean);
-    
-  if (!musicStyles.length) return 'No music detected';
-  
-  // Count occurrences of each style
-  const styleCounts = musicStyles.reduce((acc, style) => {
-    acc[style] = (acc[style] || 0) + 1;
-    return acc;
-  }, {} as Record<string, number>);
-  
-  // Return the most common style
-  return Object.entries(styleCounts)
-    .sort(([,a], [,b]) => b - a)[0][0];
-}
-
-function calculateAverageBPM(shots: ShotAnalysis[]): number {
-  const bpmMatches = shots
-    .map(shot => {
-      const text = shot.audioElements?.musicStyle || '';
-      const match = text.match(/(\d+)\s*BPM/i);
-      return match ? parseInt(match[1]) : null;
-    })
-    .filter(Boolean);
-    
-  if (!bpmMatches.length) return 0;
-  
-  return Math.round(
-    bpmMatches.reduce((sum, bpm) => sum + bpm, 0) / bpmMatches.length
-  );
-}
 
 function assessMusicEnergy(shots: ShotAnalysis[]): string {
   const energyIndicators = shots.map(shot => {
