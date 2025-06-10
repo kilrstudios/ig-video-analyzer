@@ -1,0 +1,7 @@
+# This is a template for Instagram cookies
+# Replace these values with your actual Instagram cookies
+# Format: domain=instagram.com; name=value; path=/; secure; httponly
+# Example:
+# instagram.com	TRUE	/	TRUE	1735689600	sessionid	your_session_id_here
+# instagram.com	TRUE	/	TRUE	1735689600	csrftoken	your_csrf_token_here
+# instagram.com	TRUE	/	TRUE	1735689600	ds_user_id	your_user_id_here 
