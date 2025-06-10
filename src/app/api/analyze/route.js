@@ -4,12 +4,33 @@ import { promisify } from 'util';
 import fs from 'fs';
 import path from 'path';
 import OpenAI from 'openai';
-import InstagramScraper from 'instagram-scraping';
 
 const execAsync = promisify(exec);
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY
 });
+
+// Rate limiting configuration
+const RATE_LIMIT_DELAY = 1000; // 1 second
+const MAX_RETRIES = 3;
+
+// Helper function to wait
+const wait = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
+// Helper function to handle rate limits
+async function handleRateLimit(fn, retries = MAX_RETRIES) {
+  try {
+    return await fn();
+  } catch (error) {
+    if (error.code === 'rate_limit_exceeded' && retries > 0) {
+      const retryAfter = parseInt(error.headers?.['retry-after-ms'] || RATE_LIMIT_DELAY);
+      console.log(`Rate limit hit, waiting ${retryAfter}ms before retry. Retries left: ${retries - 1}`);
+      await wait(retryAfter);
+      return handleRateLimit(fn, retries - 1);
+    }
+    throw error;
+  }
+}
 
 async function downloadVideo(url) {
   try {
@@ -24,24 +45,13 @@ async function downloadVideo(url) {
     // Generate a unique filename
     const outputPath = path.join(downloadDir, `${Date.now()}.mp4`);
     
-    // Extract video ID from URL
-    const videoId = url.split('/').pop()?.split('?')[0];
-    if (!videoId) {
-      throw new Error('Invalid Instagram URL');
-    }
-
-    // Get video info using instagram-scraping
-    const result = await InstagramScraper.getMediaByCode(videoId);
-    if (!result || !result.video_url) {
-      throw new Error('Failed to get video URL');
-    }
-
-    // Download the video using curl
-    const command = `curl -L "${result.video_url}" -o "${outputPath}"`;
+    // Use yt-dlp to download the video
+    const command = `yt-dlp -f 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best' '${url}' -o '${outputPath}'`;
     console.log('Executing command:', command);
     
     const { stdout, stderr } = await execAsync(command);
-    if (stderr) console.error('Download stderr:', stderr);
+    console.log('yt-dlp stdout:', stdout);
+    if (stderr) console.error('yt-dlp stderr:', stderr);
 
     if (!fs.existsSync(outputPath)) {
       throw new Error('Video download failed - output file not found');
@@ -94,56 +104,63 @@ async function analyzeFrame(framePath) {
   const image = fs.readFileSync(framePath);
   const base64Image = Buffer.from(image).toString('base64');
 
-  const response = await openai.chat.completions.create({
-    model: "gpt-4o-mini",
-    messages: [
-      {
-        role: "user",
-        content: [
-          {
-            type: "text",
-            text: "Analyze this frame and provide:\n1. Shot type (close-up, medium, wide, etc)\n2. Main visual elements\n3. Any text overlays\n4. Visual effects or transitions\n5. Overall composition and purpose"
-          },
-          {
-            type: "image_url",
-            image_url: {
-              url: `data:image/jpeg;base64,${base64Image}`
+  return handleRateLimit(async () => {
+    const response = await openai.chat.completions.create({
+      model: "gpt-4o-mini",
+      messages: [
+        {
+          role: "user",
+          content: [
+            {
+              type: "text",
+              text: "Analyze this frame and provide:\n1. Shot type (close-up, medium, wide, etc)\n2. Main visual elements\n3. Any text overlays\n4. Visual effects or transitions\n5. Overall composition and purpose"
+            },
+            {
+              type: "image_url",
+              image_url: {
+                url: `data:image/jpeg;base64,${base64Image}`
+              }
             }
-          }
-        ]
-      }
-    ],
-    max_tokens: 500
-  });
+          ]
+        }
+      ],
+      max_tokens: 500
+    });
 
-  return response.choices[0].message.content;
+    return response.choices[0].message.content;
+  });
 }
 
 async function analyzeAudio(audioPath) {
   const audioFile = fs.createReadStream(audioPath);
   
   // First, transcribe the audio
-  const transcription = await openai.audio.transcriptions.create({
-    file: audioFile,
-    model: "whisper-1",
-    response_format: "verbose_json",
-    timestamp_granularities: ["segment"]
+  const transcription = await handleRateLimit(async () => {
+    return await openai.audio.transcriptions.create({
+      file: audioFile,
+      model: "whisper-1",
+      response_format: "verbose_json",
+      timestamp_granularities: ["segment"]
+    });
   });
 
   // Then, analyze the transcription and audio characteristics
-  const analysis = await openai.chat.completions.create({
-    model: "gpt-4",
-    messages: [
-      {
-        role: "user",
-        content: `Analyze this audio transcription and provide:\n1. Music genre and style\n2. Estimated BPM\n3. Energy level\n4. Overall mood\n\nTranscription: ${JSON.stringify(transcription)}`
-      }
-    ]
+  const analysis = await handleRateLimit(async () => {
+    const response = await openai.chat.completions.create({
+      model: "gpt-4",
+      messages: [
+        {
+          role: "user",
+          content: `Analyze this audio transcription and provide:\n1. Music genre and style\n2. Estimated BPM\n3. Energy level\n4. Overall mood\n\nTranscription: ${JSON.stringify(transcription)}`
+        }
+      ]
+    });
+    return response.choices[0].message.content;
   });
 
   return {
     transcription,
-    analysis: analysis.choices[0].message.content
+    analysis
   };
 }
 
