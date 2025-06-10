@@ -4,6 +4,7 @@ import { promisify } from 'util';
 import fs from 'fs';
 import path from 'path';
 import OpenAI from 'openai';
+import InstagramScraper from 'instagram-scraping';
 
 const execAsync = promisify(exec);
 const openai = new OpenAI({
@@ -23,13 +24,24 @@ async function downloadVideo(url) {
     // Generate a unique filename
     const outputPath = path.join(downloadDir, `${Date.now()}.mp4`);
     
-    // Use yt-dlp to download the video
-    const command = `yt-dlp -f 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best' '${url}' -o '${outputPath}'`;
+    // Extract video ID from URL
+    const videoId = url.split('/').pop()?.split('?')[0];
+    if (!videoId) {
+      throw new Error('Invalid Instagram URL');
+    }
+
+    // Get video info using instagram-scraping
+    const result = await InstagramScraper.getMediaByCode(videoId);
+    if (!result || !result.video_url) {
+      throw new Error('Failed to get video URL');
+    }
+
+    // Download the video using curl
+    const command = `curl -L "${result.video_url}" -o "${outputPath}"`;
     console.log('Executing command:', command);
     
     const { stdout, stderr } = await execAsync(command);
-    console.log('yt-dlp stdout:', stdout);
-    if (stderr) console.error('yt-dlp stderr:', stderr);
+    if (stderr) console.error('Download stderr:', stderr);
 
     if (!fs.existsSync(outputPath)) {
       throw new Error('Video download failed - output file not found');

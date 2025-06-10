@@ -1,170 +1,120 @@
 # Instagram Video Analyzer
 
-A web application that analyzes Instagram videos using Google Cloud's Video Intelligence API. The application can detect objects, activities, and other content within Instagram videos.
+A Next.js application that analyzes Instagram videos using AI to provide insights about video content, editing techniques, and music.
 
 https://ig-video-analyzer-production.up.railway.app/
 
 ## Features
 
-- Instagram video download support via yt-dlp
-- Video analysis using Google Cloud Video Intelligence API
-- Detection of:
-  - Objects and items
-  - Activities
-  - Facial expressions
-  - Scene changes
-  - And more...
+- Download and analyze Instagram videos
+- Extract frames and analyze visual content
+- Transcribe audio and analyze speech
+- Identify music and analyze audio characteristics
+- Provide detailed analysis of video composition and editing techniques
+- Generate comprehensive video analysis reports
 
 ## Prerequisites
 
-- Node.js 18+ and npm
-- Python (for yt-dlp)
-- yt-dlp (`brew install yt-dlp` on macOS)
-- Google Cloud account with:
-  - Video Intelligence API enabled
-  - Storage API enabled
-  - Service account with appropriate permissions
-  - Service account key file
+- Node.js 20.x or later
+- Python 3.x
+- FFmpeg
+- Google Cloud account (for deployment)
+- OpenAI API key
+- Instagram account (for authentication)
 
-## Setup
+## Local Development Setup
 
-1. **Clone the repository**
-   ```bash
-   git clone [your-repo-url]
-   cd google-video-analyzer
-   ```
+1. Clone the repository:
+```bash
+git clone https://github.com/yourusername/ig-video-analyzer.git
+cd ig-video-analyzer
+```
 
-2. **Install dependencies**
-   ```bash
-   npm install
-   ```
+2. Install dependencies:
+```bash
+npm install
+```
 
-3. **Install yt-dlp**
-   - macOS:
-     ```bash
-     brew install yt-dlp
-     ```
-   - Linux:
-     ```bash
-     sudo curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /usr/local/bin/yt-dlp
-     sudo chmod a+rx /usr/local/bin/yt-dlp
-     ```
-   - Windows:
-     ```bash
-     # Using scoop
-     scoop install yt-dlp
-     # Or using chocolatey
-     choco install yt-dlp
-     ```
+3. Create a `.env.local` file with the following variables:
+```env
+OPENAI_API_KEY=your_openai_api_key
+INSTAGRAM_COOKIES=path_to_your_instagram_cookies_file
+```
 
-4. **Set up Google Cloud**
-   - Create a new project in Google Cloud Console
-   - Enable Video Intelligence API and Storage API
-   - Create a service account and download the key file
-   - Place the service account key file in the project root as `service-account.json`
+4. Get your Instagram cookies:
+   - Log into Instagram in your browser
+   - Open Developer Tools (F12)
+   - Go to Application/Storage tab
+   - Find Cookies in the left sidebar
+   - Select instagram.com
+   - Export the following cookies:
+     - sessionid
+     - csrftoken
+     - ds_user_id
 
-5. **Environment Variables**
-   Create a `.env.local` file:
-   ```env
-   GOOGLE_CLOUD_PROJECT_ID=your-project-id
-   GOOGLE_CLOUD_STORAGE_BUCKET=your-bucket-name
-   ```
+5. Create a cookies file (e.g., `instagram_cookies.txt`) with the following format:
+```
+instagram.com	TRUE	/	TRUE	1735689600	sessionid	your_session_id
+instagram.com	TRUE	/	TRUE	1735689600	csrftoken	your_csrf_token
+instagram.com	TRUE	/	TRUE	1735689600	ds_user_id	your_user_id
+```
 
-## Development
-
-Run the development server:
+6. Run the development server:
 ```bash
 npm run dev
 ```
 
-Visit `http://localhost:3000` in your browser.
+## Deployment to Google Cloud Run
 
-## Deployment Options
+1. Build and push the Docker image:
+```bash
+gcloud builds submit --tag us-west1-docker.pkg.dev/video-analyzer-app-123456/ig-video-analyzer-repo/ig-video-analyzer
+```
 
-### 1. Server Deployment (Recommended)
+2. Create a secret for Instagram cookies:
+```bash
+gcloud secrets create instagram-cookies --data-file=instagram_cookies.txt
+```
 
-Deploy to a server with yt-dlp installed:
-1. Install yt-dlp on the server
-2. Deploy the Next.js application
-3. Set up environment variables
-4. Ensure Python is available
+3. Grant access to the secret:
+```bash
+gcloud secrets add-iam-policy-binding instagram-cookies --member="serviceAccount:614111484782-compute@developer.gserviceaccount.com" --role="roles/secretmanager.secretAccessor"
+```
 
-### 2. Docker Deployment
-
-Use Docker to package the application with all dependencies:
-1. Build the Docker image
-2. Deploy to any container platform
-3. All dependencies included
-
-### 3. Browser-Only Version
-
-For simpler deployment without yt-dlp:
-1. Modify the code to use Instagram's oEmbed or Graph API
-2. Remove yt-dlp dependency
-3. Deploy to any static hosting
+4. Deploy to Cloud Run:
+```bash
+gcloud run deploy ig-video-analyzer \
+  --image us-west1-docker.pkg.dev/video-analyzer-app-123456/ig-video-analyzer-repo/ig-video-analyzer \
+  --platform managed \
+  --region us-west1 \
+  --allow-unauthenticated \
+  --set-env-vars OPENAI_API_KEY=your_openai_api_key \
+  --set-secrets=INSTAGRAM_COOKIES=instagram-cookies:latest
+```
 
 ## Usage
 
 1. Open the application in your browser
-2. Paste an Instagram video/reel URL
+2. Paste an Instagram video URL
 3. Click "Analyze"
-4. View the analysis results
+4. Wait for the analysis to complete
+5. View the detailed analysis report
 
-## API Reference
+## Architecture
 
-### POST /api/analyze
-Analyzes a video from a given URL, detecting labels and shot changes.
+- Frontend: Next.js with React
+- Backend: Next.js API routes
+- Video Processing: FFmpeg and yt-dlp
+- AI Analysis: OpenAI GPT-4 Vision and Whisper
+- Deployment: Google Cloud Run
+- Storage: Temporary local storage for processing
 
-Request body:
-```json
-{
-  "url": "https://www.instagram.com/p/..."
-}
-```
+## Security Notes
 
-Response:
-```json
-{
-  "labels": [
-    {
-      "description": "string",
-      "confidence": number,
-      "segments": [
-        {
-          "startTime": "string",
-          "endTime": "string"
-        }
-      ]
-    }
-  ],
-  "shots": [
-    {
-      "startTime": "string",
-      "endTime": "string",
-      "confidence": number,
-      "frameRate": number,
-      "shotType": "string"  // e.g., "FADE", "CUT", "DISSOLVE"
-    }
-  ]
-}
-```
-
-The response includes:
-- `labels`: Objects, activities, and concepts detected in the video
-- `shots`: Scene changes and transitions in the video
-  - `startTime`: When the shot begins
-  - `endTime`: When the shot ends
-  - `confidence`: Confidence score of the detection
-  - `frameRate`: Frame rate at the time of the shot
-  - `shotType`: Type of transition between shots
-
-## Technical Details
-
-- Built with Next.js 14
-- Uses Tailwind CSS for styling
-- Server-side video processing
-- Google Cloud APIs for analysis
-- yt-dlp for reliable video downloading
+- The application uses temporary storage for video processing
+- All files are deleted after analysis
+- Instagram cookies are stored securely in Google Cloud Secret Manager
+- The application runs as a non-root user in production
 
 ## Contributing
 
