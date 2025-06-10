@@ -2,6 +2,8 @@
 
 A web application that analyzes Instagram videos using Google Cloud's Video Intelligence API. The application can detect objects, activities, and other content within Instagram videos.
 
+https://ig-video-analyzer-production.up.railway.app/
+
 ## Features
 
 - Instagram video download support via yt-dlp
