@@ -11,22 +11,46 @@ const openai = new OpenAI({
 });
 
 // Rate limiting configuration
-const RATE_LIMIT_DELAY = 1000; // 1 second
-const MAX_RETRIES = 3;
+const RATE_LIMIT_DELAY = 2000; // Increased base delay to 2 seconds
+const MAX_RETRIES = 3; // Reduced retries but with longer delays
+const MAX_TOKENS_PER_REQUEST = 300; // Reduced token limit
+const MIN_DELAY_BETWEEN_REQUESTS = 1000; // Minimum 1 second between requests
 
-// Helper function to wait
-const wait = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+// Global request tracking
+let lastRequestTime = 0;
+
+// Helper function to wait with exponential backoff and minimum delay
+const wait = (ms, attempt) => {
+  const backoffDelay = Math.max(
+    MIN_DELAY_BETWEEN_REQUESTS,
+    ms * Math.pow(2, attempt)
+  );
+  return new Promise(resolve => setTimeout(resolve, backoffDelay));
+};
+
+// Helper function to ensure minimum delay between requests
+const ensureRequestDelay = async () => {
+  const now = Date.now();
+  const timeSinceLastRequest = now - lastRequestTime;
+  if (timeSinceLastRequest < MIN_DELAY_BETWEEN_REQUESTS) {
+    await new Promise(resolve => 
+      setTimeout(resolve, MIN_DELAY_BETWEEN_REQUESTS - timeSinceLastRequest)
+    );
+  }
+  lastRequestTime = Date.now();
+};
 
 // Helper function to handle rate limits
-async function handleRateLimit(fn, retries = MAX_RETRIES) {
+async function handleRateLimit(fn, retries = MAX_RETRIES, attempt = 0) {
   try {
+    await ensureRequestDelay();
     return await fn();
   } catch (error) {
     if (error.code === 'rate_limit_exceeded' && retries > 0) {
       const retryAfter = parseInt(error.headers?.['retry-after-ms'] || RATE_LIMIT_DELAY);
-      console.log(`Rate limit hit, waiting ${retryAfter}ms before retry. Retries left: ${retries - 1}`);
-      await wait(retryAfter);
-      return handleRateLimit(fn, retries - 1);
+      console.log(`Rate limit hit (attempt ${attempt + 1}/${MAX_RETRIES}), waiting ${retryAfter}ms before retry`);
+      await wait(retryAfter, attempt);
+      return handleRateLimit(fn, retries - 1, attempt + 1);
     }
     throw error;
   }
@@ -124,7 +148,7 @@ async function analyzeFrame(framePath) {
           ]
         }
       ],
-      max_tokens: 500
+      max_tokens: MAX_TOKENS_PER_REQUEST
     });
 
     return response.choices[0].message.content;
@@ -153,7 +177,8 @@ async function analyzeAudio(audioPath) {
           role: "user",
           content: `Analyze this audio transcription and provide:\n1. Music genre and style\n2. Estimated BPM\n3. Energy level\n4. Overall mood\n\nTranscription: ${JSON.stringify(transcription)}`
         }
-      ]
+      ],
+      max_tokens: MAX_TOKENS_PER_REQUEST
     });
     return response.choices[0].message.content;
   });
