@@ -11,13 +11,36 @@ const openai = new OpenAI({
 });
 
 // Rate limiting configuration
-const RATE_LIMIT_DELAY = 2000; // Increased base delay to 2 seconds
-const MAX_RETRIES = 3; // Reduced retries but with longer delays
-const MAX_TOKENS_PER_REQUEST = 300; // Reduced token limit
-const MIN_DELAY_BETWEEN_REQUESTS = 1000; // Minimum 1 second between requests
+const RATE_LIMIT_DELAY = 5000; // Increased to 5 seconds
+const MAX_RETRIES = 2; // Reduced to 2 retries
+const MAX_TOKENS_PER_REQUEST = 200; // Further reduced token limit
+const MIN_DELAY_BETWEEN_REQUESTS = 3000; // Increased to 3 seconds between requests
+const MAX_CONCURRENT_REQUESTS = 1; // Only one request at a time
 
 // Global request tracking
 let lastRequestTime = 0;
+let requestQueue = [];
+let isProcessing = false;
+
+// Helper function to process queue
+async function processQueue() {
+  if (isProcessing || requestQueue.length === 0) return;
+  
+  isProcessing = true;
+  const { fn, resolve, reject } = requestQueue.shift();
+  
+  try {
+    const result = await fn();
+    resolve(result);
+  } catch (error) {
+    reject(error);
+  } finally {
+    isProcessing = false;
+    if (requestQueue.length > 0) {
+      setTimeout(processQueue, MIN_DELAY_BETWEEN_REQUESTS);
+    }
+  }
+}
 
 // Helper function to wait with exponential backoff and minimum delay
 const wait = (ms, attempt) => {
@@ -42,10 +65,10 @@ const ensureRequestDelay = async () => {
 
 // Helper function to handle rate limits
 async function handleRateLimit(fn, retries = MAX_RETRIES, attempt = 0) {
-  try {
-    await ensureRequestDelay();
-    return await fn();
-  } catch (error) {
+  return new Promise((resolve, reject) => {
+    requestQueue.push({ fn, resolve, reject });
+    processQueue();
+  }).catch(async (error) => {
     if (error.code === 'rate_limit_exceeded' && retries > 0) {
       const retryAfter = parseInt(error.headers?.['retry-after-ms'] || RATE_LIMIT_DELAY);
       console.log(`Rate limit hit (attempt ${attempt + 1}/${MAX_RETRIES}), waiting ${retryAfter}ms before retry`);
@@ -53,7 +76,7 @@ async function handleRateLimit(fn, retries = MAX_RETRIES, attempt = 0) {
       return handleRateLimit(fn, retries - 1, attempt + 1);
     }
     throw error;
-  }
+  });
 }
 
 async function downloadVideo(url) {
