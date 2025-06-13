@@ -60,3 +60,5 @@ service-account.json
 .Trashes
 ehthumbs.db
 Thumbs.db
+
+/src/generated/prisma

@@ -1283,6 +1283,48 @@ async function analyzeVideo(videoPath) {
       duration: `${cleanupDuration}ms`
     });
 
+    // Process frame analyses into comprehensive scenes
+    logWithTimestamp('🔄 Phase 5: Processing scenes and comprehensive analysis');
+    const processingStartTime = Date.now();
+    
+    const scenes = await generateSceneAnalysis(frameAnalyses, audioAnalysis);
+    const contentStructure = await generateContentStructure(frameAnalyses, audioAnalysis, scenes);
+
+    const processingDuration = Date.now() - processingStartTime;
+    const totalDuration = Date.now() - startTime;
+    
+    logWithTimestamp('✅ Phase 5 complete: Scene processing finished', { 
+      sceneCount: scenes.length,
+      duration: `${processingDuration}ms`
+    });
+
+    // Extract hooks, categorize video, and analyze context
+    logWithTimestamp('🔄 Phase 6: Extracting hooks, categorizing video, and analyzing context');
+    const hookAnalysisStartTime = Date.now();
+    
+    const hooks = await extractVideoHooks(frameAnalyses, audioAnalysis);
+    const videoCategory = await categorizeVideo(frameAnalyses, audioAnalysis, scenes);
+    const contextualAnalysis = await analyzeVideoContext(frameAnalyses, audioAnalysis, scenes);
+    
+    const hookAnalysisDuration = Date.now() - hookAnalysisStartTime;
+    logWithTimestamp('✅ Phase 6 complete: Hook analysis, categorization, and context analysis finished', { 
+      hookCount: hooks.length,
+      category: videoCategory.category,
+      contextThemes: contextualAnalysis.themes?.length || 0,
+      duration: `${hookAnalysisDuration}ms`
+    });
+
+    // Generate strategic overview based on all analysis data
+    logWithTimestamp('🔄 Phase 7: Generating strategic overview');
+    const strategicOverviewStartTime = Date.now();
+    
+    const strategicOverview = await generateStrategicOverview(scenes, audioAnalysis, contextualAnalysis, videoCategory);
+    
+    const strategicOverviewDuration = Date.now() - strategicOverviewStartTime;
+    logWithTimestamp('✅ Phase 7 complete: Strategic overview generated', { 
+      duration: `${strategicOverviewDuration}ms`
+    });
+
     // CONSOLIDATED ANALYSIS - Single API request replaces phases 5-7
     logWithTimestamp('🔄 Phase 5: Comprehensive analysis (single request optimization)');
     const comprehensiveAnalysisStartTime = Date.now();
