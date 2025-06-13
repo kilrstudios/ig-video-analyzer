@@ -118,15 +118,29 @@ async function extractFrames(videoPath) {
     fs.mkdirSync(framesDir, { recursive: true });
   }
 
-  // Get video duration
-  const { stdout: durationOutput } = await execAsync(
-    `ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "${videoPath}"`
-  );
-  const duration = parseFloat(durationOutput);
+  // First, detect scenes using FFmpeg's scene detection
+  const sceneDetectionCommand = `ffmpeg -i "${videoPath}" -vf "select='gt(scene,0.3)',metadata=print:file=-" -f null - 2>&1`;
+  const { stdout: sceneOutput } = await execAsync(sceneDetectionCommand);
+  
+  // Parse scene detection output to get timestamps
+  const sceneTimestamps = sceneOutput
+    .split('\n')
+    .filter(line => line.includes('pts_time'))
+    .map(line => {
+      const match = line.match(/pts_time:(\d+\.\d+)/);
+      return match ? parseFloat(match[1]) : null;
+    })
+    .filter(Boolean);
 
-  // Extract one frame every second
+  // Add the first frame (0 seconds) if not already included
+  if (sceneTimestamps[0] !== 0) {
+    sceneTimestamps.unshift(0);
+  }
+
+  // Extract frames at detected scene changes
   const outputPattern = path.join(framesDir, 'frame-%d.jpg');
-  await execAsync(`ffmpeg -i "${videoPath}" -vf fps=1 "${outputPattern}"`);
+  const selectCommand = `ffmpeg -i "${videoPath}" -vf "select='eq(n,0)+gt(scene,0.3)',metadata=print:file=-" -vsync vfr -frame_pts 1 "${outputPattern}"`;
+  await execAsync(selectCommand);
 
   // Get list of extracted frames
   const frames = fs.readdirSync(framesDir)
@@ -138,7 +152,17 @@ async function extractFrames(videoPath) {
       return aNum - bNum;
     });
 
-  return frames;
+  // Calculate durations for each shot
+  const shotDurations = sceneTimestamps.map((timestamp, index) => {
+    const nextTimestamp = sceneTimestamps[index + 1];
+    return nextTimestamp ? (nextTimestamp - timestamp).toFixed(1) : 'end';
+  });
+
+  return {
+    frames,
+    shotDurations,
+    sceneTimestamps
+  };
 }
 
 async function extractAudio(videoPath) {
@@ -214,7 +238,7 @@ async function analyzeAudio(audioPath) {
 
 async function analyzeVideo(videoPath) {
   // Extract frames and audio
-  const frames = await extractFrames(videoPath);
+  const { frames, shotDurations, sceneTimestamps } = await extractFrames(videoPath);
   const audioPath = await extractAudio(videoPath);
 
   // Analyze frames
@@ -231,10 +255,10 @@ async function analyzeVideo(videoPath) {
 
   // Process frame analyses to detect shots and effects
   const shots = frameAnalyses.map((analysis, index) => {
-    const duration = '1s'; // Each frame represents 1 second
     return {
       type: extractShotType(analysis),
-      duration,
+      duration: `${shotDurations[index]}s`,
+      timestamp: `${sceneTimestamps[index]}s`,
       description: extractDescription(analysis)
     };
   });
@@ -246,7 +270,7 @@ async function analyzeVideo(videoPath) {
   return {
     contentStructure,
     hook: extractHook(frameAnalyses[0]),
-    duration: `${frames.length}s`,
+    duration: `${sceneTimestamps[sceneTimestamps.length - 1]}s`,
     shots,
     effects,
     music
