@@ -6,7 +6,9 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "deploy": "npm run build && wrangler pages deploy .next",
+    "preview": "wrangler pages dev .next"
   },
   "dependencies": {
     "@google-cloud/storage": "^7.9.0",
