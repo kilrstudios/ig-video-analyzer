@@ -8,84 +8,63 @@ import UserDashboard from '@/components/UserDashboard';
 import { useAuth } from '@/contexts/AuthContext';
 
 // ... existing interfaces ...
-interface SceneFraming {
-  shotTypes: string[];
-  cameraMovement: string;
-  composition: string;
-}
-
-interface SceneLighting {
-  style: string;
-  mood: string;
-  direction: string;
-  quality: string;
-}
-
-interface SceneMood {
-  emotional: string;
-  atmosphere: string;
-  tone: string;
-}
-
-interface SceneAction {
-  movement: string;
-  direction: string;
-  pace: string;
-}
-
-interface SceneDialogue {
-  hasText: boolean;
-  textContent: string;
-  textStyle: string;
-}
-
-interface SceneAudio {
-  music: string;
-  soundDesign: string;
-  dialogue: string;
-}
-
-interface SceneVisualEffects {
-  transitions: string;
-  effects: string;
-  graphics: string;
-}
-
-interface SceneSetting {
-  location: string;
-  environment: string;
-  background: string;
-}
-
-interface SceneSubjects {
-  main: string;
-  secondary: string;
-  focus: string;
-}
-
-interface SceneContextualMeaning {
-  intent: string;
-  execution: string;
-  impact: string;
-  significance: string;
-}
-
 interface Scene {
   sceneNumber: number;
-  duration: string;
   timeRange: string;
   title: string;
   description: string;
-  framing: SceneFraming;
-  lighting: SceneLighting;
-  mood: SceneMood;
-  action: SceneAction;
-  dialogue: SceneDialogue;
-  audio: SceneAudio;
-  visualEffects: SceneVisualEffects;
-  setting: SceneSetting;
-  subjects: SceneSubjects;
-  contextualMeaning: SceneContextualMeaning;
+  duration: string;
+  framing: {
+    shotTypes: string[];
+    cameraMovement: string;
+    composition: string;
+  };
+  lighting: {
+    style: string;
+    mood: string;
+    direction: string;
+    quality: string;
+  };
+  mood: {
+    emotional: string;
+    atmosphere: string;
+    tone: string;
+  };
+  actionMovement: {
+    movement: string;
+    direction: string;
+    pace: string;
+  };
+  audio: {
+    music: string;
+    soundDesign: string;
+    dialogue: string;
+  };
+  visualEffects: {
+    transitions: string;
+    effects: string;
+    graphics: string;
+  };
+  settingEnvironment: {
+    location: string;
+    environment: string;
+    background: string;
+  };
+  subjectsFocus: {
+    main: string;
+    secondary: string;
+    focus: string;
+  };
+  intentImpactAnalysis: {
+    creatorIntent: string;
+    howExecuted: string;
+    viewerImpact: string;
+    narrativeSignificance: string;
+  };
+  textDialogue: {
+    content: string;
+    style: string;
+  };
 }
 
 interface VideoMetadata {
@@ -96,10 +75,11 @@ interface VideoMetadata {
 
 interface Hook {
   timestamp: string;
-  type: 'visual_disrupter' | 'question' | 'positive_statement' | 'negative_statement';
+  type: 'visual_disrupter' | 'question' | 'positive_statement' | 'negative_statement' | 'action_statement' | 'contrast' | 'irony';
   description: string;
   impact: 'high' | 'medium' | 'low';
   element: string;
+  psychologicalTrigger?: string;
 }
 
 interface VideoCategory {
@@ -172,15 +152,37 @@ interface ContextualAnalysis {
   keyInsights: string[];
 }
 
+interface NarrativeArc {
+  arcType: string;
+  structure: string;
+  keyBeats: string;
+  examples?: {
+    comedy?: string;
+    educational?: string;
+    story?: string;
+    transformation?: string;
+    comparison?: string;
+  };
+}
+
+interface ImplementationFramework {
+  preProduction: string;
+  production: string;
+  postProduction: string;
+  successMetrics: string;
+}
+
 interface StrategicOverview {
   videoOverview: string;
+  narrativeArc: NarrativeArc;
   whyItWorks: string;
   successFormula: string;
   universalPrinciples: string;
   technicalRequirements: string;
-  implementationFramework: string;
+  implementationFramework: ImplementationFramework;
   adaptabilityGuidelines: string;
   viralPotential: string;
+  resourceScaling?: string;
 }
 
 interface VideoAnalysis {

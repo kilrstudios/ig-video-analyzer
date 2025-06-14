@@ -2,84 +2,63 @@
 
 import { useState } from 'react';
 
-interface SceneFraming {
-  shotTypes: string[];
-  cameraMovement: string;
-  composition: string;
-}
-
-interface SceneLighting {
-  style: string;
-  mood: string;
-  direction: string;
-  quality: string;
-}
-
-interface SceneMood {
-  emotional: string;
-  atmosphere: string;
-  tone: string;
-}
-
-interface SceneAction {
-  movement: string;
-  direction: string;
-  pace: string;
-}
-
-interface SceneDialogue {
-  hasText: boolean;
-  textContent: string;
-  textStyle: string;
-}
-
-interface SceneAudio {
-  music: string;
-  soundDesign: string;
-  dialogue: string;
-}
-
-interface SceneVisualEffects {
-  transitions: string;
-  effects: string;
-  graphics: string;
-}
-
-interface SceneSetting {
-  location: string;
-  environment: string;
-  background: string;
-}
-
-interface SceneSubjects {
-  main: string;
-  secondary: string;
-  focus: string;
-}
-
-interface SceneContextualMeaning {
-  intent: string;
-  execution: string;
-  impact: string;
-  significance: string;
-}
-
 interface Scene {
   sceneNumber: number;
-  duration: string;
   timeRange: string;
   title: string;
   description: string;
-  framing: SceneFraming;
-  lighting: SceneLighting;
-  mood: SceneMood;
-  action: SceneAction;
-  dialogue: SceneDialogue;
-  audio: SceneAudio;
-  visualEffects: SceneVisualEffects;
-  setting: SceneSetting;
-  subjects: SceneSubjects;
-  contextualMeaning: SceneContextualMeaning;
+  duration: string;
+  framing: {
+    shotTypes: string[];
+    cameraMovement: string;
+    composition: string;
+  };
+  lighting: {
+    style: string;
+    mood: string;
+    direction: string;
+    quality: string;
+  };
+  mood: {
+    emotional: string;
+    atmosphere: string;
+    tone: string;
+  };
+  actionMovement: {
+    movement: string;
+    direction: string;
+    pace: string;
+  };
+  audio: {
+    music: string;
+    soundDesign: string;
+    dialogue: string;
+  };
+  visualEffects: {
+    transitions: string;
+    effects: string;
+    graphics: string;
+  };
+  settingEnvironment: {
+    location: string;
+    environment: string;
+    background: string;
+  };
+  subjectsFocus: {
+    main: string;
+    secondary: string;
+    focus: string;
+  };
+  intentImpactAnalysis: {
+    creatorIntent: string;
+    howExecuted: string;
+    viewerImpact: string;
+    narrativeSignificance: string;
+  };
+  textDialogue: {
+    content: string;
+    style: string;
+  };
 }
 
 interface VideoMetadata {
@@ -90,10 +69,11 @@ interface VideoMetadata {
 
 interface Hook {
   timestamp: string;
-  type: 'visual_disrupter' | 'question' | 'positive_statement' | 'negative_statement';
+  type: 'visual_disrupter' | 'question' | 'positive_statement' | 'negative_statement' | 'action_statement' | 'contrast' | 'irony';
   description: string;
   impact: 'high' | 'medium' | 'low';
   element: string;
+  psychologicalTrigger?: string;
 }
 
 interface VideoCategory {
@@ -166,15 +146,37 @@ interface ContextualAnalysis {
   keyInsights: string[];
 }
 
+interface NarrativeArc {
+  arcType: string;
+  structure: string;
+  keyBeats: string;
+  examples?: {
+    comedy?: string;
+    educational?: string;
+    story?: string;
+    transformation?: string;
+    comparison?: string;
+  };
+}
+
+interface ImplementationFramework {
+  preProduction: string;
+  production: string;
+  postProduction: string;
+  successMetrics: string;
+}
+
 interface StrategicOverview {
   videoOverview: string;
+  narrativeArc: NarrativeArc;
   whyItWorks: string;
   successFormula: string;
   universalPrinciples: string;
   technicalRequirements: string;
-  implementationFramework: string;
+  implementationFramework: ImplementationFramework;
   adaptabilityGuidelines: string;
   viralPotential: string;
+  resourceScaling?: string;
 }
 
 interface VideoAnalysis {
@@ -287,6 +289,27 @@ export default function VideoAnalysis({ results, onDownloadPdf, isGeneratingPdf 
                       <p className="text-blue-800">{results.strategicOverview.videoOverview}</p>
                     </div>
                     
+                    {results.strategicOverview.narrativeArc && (
+                      <div className="bg-teal-50 rounded-lg p-4">
+                        <h4 className="font-semibold text-teal-900 mb-2">📖 Narrative Arc Analysis</h4>
+                        <div className="space-y-3">
+                          <div>
+                            <span className="inline-block px-2 py-1 bg-teal-100 text-teal-800 rounded text-sm font-medium mb-2">
+                              {results.strategicOverview.narrativeArc.arcType.toUpperCase()} STRUCTURE
+                            </span>
+                          </div>
+                          <div>
+                            <h5 className="font-medium text-teal-900 mb-1">Story Progression:</h5>
+                            <p className="text-teal-800 text-sm">{results.strategicOverview.narrativeArc.structure}</p>
+                          </div>
+                          <div>
+                            <h5 className="font-medium text-teal-900 mb-1">Key Story Beats:</h5>
+                            <p className="text-teal-800 text-sm">{results.strategicOverview.narrativeArc.keyBeats}</p>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                    
                     <div className="bg-green-50 rounded-lg p-4">
                       <h4 className="font-semibold text-green-900 mb-2">Why It Works</h4>
                       <p className="text-green-800">{results.strategicOverview.whyItWorks}</p>
@@ -308,8 +331,29 @@ export default function VideoAnalysis({ results, onDownloadPdf, isGeneratingPdf 
                     </div>
                     
                     <div className="bg-indigo-50 rounded-lg p-4">
-                      <h4 className="font-semibold text-indigo-900 mb-2">Implementation Framework</h4>
-                      <p className="text-indigo-800">{results.strategicOverview.implementationFramework}</p>
+                      <h4 className="font-semibold text-indigo-900 mb-2">🎬 Implementation Framework</h4>
+                      <div className="space-y-3">
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                          <div className="bg-indigo-100 rounded-lg p-3">
+                            <h5 className="font-medium text-indigo-900 mb-1 text-sm">📋 Pre-Production</h5>
+                            <p className="text-indigo-800 text-xs">{results.strategicOverview.implementationFramework.preProduction}</p>
+                          </div>
+                          <div className="bg-indigo-100 rounded-lg p-3">
+                            <h5 className="font-medium text-indigo-900 mb-1 text-sm">🎥 Production</h5>
+                            <p className="text-indigo-800 text-xs">{results.strategicOverview.implementationFramework.production}</p>
+                          </div>
+                        </div>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                          <div className="bg-indigo-100 rounded-lg p-3">
+                            <h5 className="font-medium text-indigo-900 mb-1 text-sm">✂️ Post-Production</h5>
+                            <p className="text-indigo-800 text-xs">{results.strategicOverview.implementationFramework.postProduction}</p>
+                          </div>
+                          <div className="bg-indigo-100 rounded-lg p-3">
+                            <h5 className="font-medium text-indigo-900 mb-1 text-sm">📊 Success Metrics</h5>
+                            <p className="text-indigo-800 text-xs">{results.strategicOverview.implementationFramework.successMetrics}</p>
+                          </div>
+                        </div>
+                      </div>
                     </div>
                     
                     <div className="bg-pink-50 rounded-lg p-4">
@@ -321,6 +365,13 @@ export default function VideoAnalysis({ results, onDownloadPdf, isGeneratingPdf 
                       <h4 className="font-semibold text-red-900 mb-2">Viral Potential</h4>
                       <p className="text-red-800">{results.strategicOverview.viralPotential}</p>
                     </div>
+                    
+                    {results.strategicOverview.resourceScaling && (
+                      <div className="bg-yellow-50 rounded-lg p-4">
+                        <h4 className="font-semibold text-yellow-900 mb-2">Resource Scaling</h4>
+                        <p className="text-yellow-800">{results.strategicOverview.resourceScaling}</p>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
@@ -346,43 +397,150 @@ export default function VideoAnalysis({ results, onDownloadPdf, isGeneratingPdf 
 
         {activeTab === 'scenes' && (
           <div className="space-y-4">
-            <h3 className="font-semibold text-gray-900">Scene-by-Scene Analysis</h3>
-            <div className="grid gap-4">
+            <h3 className="font-semibold text-gray-900">Scene by Scene Analysis</h3>
+            <div className="grid gap-6">
               {results.scenes.map((scene, index) => (
                 <div
                   key={index}
-                  className="border border-gray-200 rounded-lg p-4 hover:border-blue-300 transition-colors cursor-pointer"
-                  onClick={() => setSelectedScene(selectedScene === scene ? null : scene)}
+                  className="border border-gray-200 rounded-lg p-6 hover:border-blue-300 transition-colors"
                 >
-                  <div className="flex justify-between items-start mb-2">
-                    <h4 className="font-medium text-gray-900">
-                      Scene {scene.sceneNumber}: {scene.title}
-                    </h4>
-                    <span className="text-sm text-gray-500">{scene.duration}</span>
+                  {/* Scene Header */}
+                  <div className="flex justify-between items-start mb-4">
+                    <div>
+                      <h4 className="text-xl font-semibold text-gray-900 mb-1">
+                        Scene {scene.sceneNumber}
+                      </h4>
+                      <h5 className="text-lg font-medium text-blue-600 mb-2">
+                        {scene.title}
+                      </h5>
+                      <p className="text-gray-600 mb-3">{scene.description}</p>
+                    </div>
+                    <div className="text-right">
+                      <div className="text-sm font-medium text-gray-900">{scene.duration}</div>
+                      <div className="text-xs text-gray-500">{scene.timeRange}</div>
+                    </div>
                   </div>
-                  <p className="text-sm text-gray-600 mb-2">{scene.description}</p>
-                  
-                  {selectedScene === scene && (
-                    <div className="mt-4 pt-4 border-t border-gray-200 space-y-3">
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
-                        <div>
-                          <strong>Framing:</strong> {scene.framing.shotTypes.join(', ')}
+
+                  {/* Technical Details Grid */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mb-4">
+                    {/* Framing & Composition */}
+                    <div className="bg-blue-50 rounded-lg p-3">
+                      <h6 className="font-semibold text-blue-900 mb-2 text-sm">📹 Framing & Composition</h6>
+                      <div className="space-y-1 text-xs">
+                        <div><strong>Shot Types:</strong> {scene.framing.shotTypes.join(', ')}</div>
+                        <div><strong>Camera Movement:</strong> {scene.framing.cameraMovement}</div>
+                        <div><strong>Composition:</strong> {scene.framing.composition}</div>
+                      </div>
+                    </div>
+
+                    {/* Lighting */}
+                    <div className="bg-yellow-50 rounded-lg p-3">
+                      <h6 className="font-semibold text-yellow-900 mb-2 text-sm">💡 Lighting</h6>
+                      <div className="space-y-1 text-xs">
+                        <div><strong>Style:</strong> {scene.lighting.style}</div>
+                        <div><strong>Mood:</strong> {scene.lighting.mood}</div>
+                        <div><strong>Direction:</strong> {scene.lighting.direction}</div>
+                        <div><strong>Quality:</strong> {scene.lighting.quality}</div>
+                      </div>
+                    </div>
+
+                    {/* Mood & Atmosphere */}
+                    <div className="bg-purple-50 rounded-lg p-3">
+                      <h6 className="font-semibold text-purple-900 mb-2 text-sm">🎭 Mood & Atmosphere</h6>
+                      <div className="space-y-1 text-xs">
+                        <div><strong>Emotional:</strong> {scene.mood.emotional}</div>
+                        <div><strong>Atmosphere:</strong> {scene.mood.atmosphere}</div>
+                        <div><strong>Tone:</strong> {scene.mood.tone}</div>
+                      </div>
+                    </div>
+
+                    {/* Action & Movement */}
+                    <div className="bg-green-50 rounded-lg p-3">
+                      <h6 className="font-semibold text-green-900 mb-2 text-sm">🎬 Action & Movement</h6>
+                      <div className="space-y-1 text-xs">
+                        <div><strong>Movement:</strong> {scene.actionMovement.movement}</div>
+                        <div><strong>Direction:</strong> {scene.actionMovement.direction}</div>
+                        <div><strong>Pace:</strong> {scene.actionMovement.pace}</div>
+                      </div>
+                    </div>
+
+                    {/* Audio */}
+                    <div className="bg-red-50 rounded-lg p-3">
+                      <h6 className="font-semibold text-red-900 mb-2 text-sm">🎵 Audio</h6>
+                      <div className="space-y-1 text-xs">
+                        <div><strong>Music:</strong> {scene.audio.music}</div>
+                        <div><strong>Sound Design:</strong> {scene.audio.soundDesign}</div>
+                        <div><strong>Dialogue:</strong> {scene.audio.dialogue}</div>
+                      </div>
+                    </div>
+
+                    {/* Visual Effects */}
+                    <div className="bg-indigo-50 rounded-lg p-3">
+                      <h6 className="font-semibold text-indigo-900 mb-2 text-sm">✨ Visual Effects</h6>
+                      <div className="space-y-1 text-xs">
+                        <div><strong>Transitions:</strong> {scene.visualEffects.transitions}</div>
+                        <div><strong>Effects:</strong> {scene.visualEffects.effects}</div>
+                        <div><strong>Graphics:</strong> {scene.visualEffects.graphics}</div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Setting & Subjects */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                    <div className="bg-gray-50 rounded-lg p-3">
+                      <h6 className="font-semibold text-gray-900 mb-2 text-sm">🏞️ Setting & Environment</h6>
+                      <div className="space-y-1 text-xs">
+                        <div><strong>Location:</strong> {scene.settingEnvironment.location}</div>
+                        <div><strong>Environment:</strong> {scene.settingEnvironment.environment}</div>
+                        <div><strong>Background:</strong> {scene.settingEnvironment.background}</div>
+                      </div>
+                    </div>
+
+                    <div className="bg-orange-50 rounded-lg p-3">
+                      <h6 className="font-semibold text-orange-900 mb-2 text-sm">👥 Subjects & Focus</h6>
+                      <div className="space-y-1 text-xs">
+                        <div><strong>Main:</strong> {scene.subjectsFocus.main}</div>
+                        <div><strong>Secondary:</strong> {scene.subjectsFocus.secondary}</div>
+                        <div><strong>Focus:</strong> {scene.subjectsFocus.focus}</div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Intent & Impact Analysis */}
+                  <div className="bg-teal-50 rounded-lg p-4 mb-4">
+                    <h6 className="font-semibold text-teal-900 mb-3 text-sm">🧠 Intent & Impact Analysis</h6>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
+                      <div>
+                        <div className="mb-2">
+                          <strong>Creator Intent</strong>
+                          <p className="text-teal-800 mt-1">{scene.intentImpactAnalysis.creatorIntent}</p>
                         </div>
                         <div>
-                          <strong>Lighting:</strong> {scene.lighting.style}
-                        </div>
-                        <div>
-                          <strong>Mood:</strong> {scene.mood.emotional}
-                        </div>
-                        <div>
-                          <strong>Setting:</strong> {scene.setting.location}
+                          <strong>How It's Executed</strong>
+                          <p className="text-teal-800 mt-1">{scene.intentImpactAnalysis.howExecuted}</p>
                         </div>
                       </div>
-                      {scene.dialogue.hasText && (
-                        <div>
-                          <strong>Dialogue:</strong> {scene.dialogue.textContent}
+                      <div>
+                        <div className="mb-2">
+                          <strong>Viewer Impact</strong>
+                          <p className="text-teal-800 mt-1">{scene.intentImpactAnalysis.viewerImpact}</p>
                         </div>
-                      )}
+                        <div>
+                          <strong>Narrative Significance</strong>
+                          <p className="text-teal-800 mt-1">{scene.intentImpactAnalysis.narrativeSignificance}</p>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Text & Dialogue */}
+                  {scene.textDialogue.content && (
+                    <div className="bg-pink-50 rounded-lg p-3">
+                      <h6 className="font-semibold text-pink-900 mb-2 text-sm">💬 Text & Dialogue</h6>
+                      <div className="text-xs">
+                        <div><strong>Content:</strong> {scene.textDialogue.content}</div>
+                        <div><strong>Style:</strong> {scene.textDialogue.style}</div>
+                      </div>
                     </div>
                   )}
                 </div>

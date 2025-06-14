@@ -894,7 +894,7 @@ async function generateComprehensiveAnalysis(frameAnalyses, audioAnalysis) {
     const musicContent = audioAnalysis.separatedAudio?.musicLyrics?.content || '';
     const contextPriority = audioAnalysis.separatedAudio?.contextPriority || 'unknown';
 
-    const comprehensivePrompt = `You are a professional video content strategist. Analyze this ${videoLength}-second video and provide a complete analysis in a single response.
+    const comprehensivePrompt = `You are a premium video content strategist and analysis expert. Analyze this ${videoLength}-second video and provide a comprehensive, detailed analysis matching professional standards.
 
 VIDEO DATA:
 Duration: ${videoLength} seconds
@@ -902,9 +902,9 @@ Frame Count: ${frameAnalyses.length}
 Audio Transcript: "${transcript}"
 On-Screen Text: "${allFrameText}"
 
-FRAME-BY-FRAME ANALYSIS:
+DETAILED FRAME ANALYSIS:
 ${frameAnalyses.slice(0, 12).map((frame, i) => 
-  `${(i * 0.5).toFixed(1)}s: ${frame.contextualMeaning || frame.analysis.substring(0, 200)}`
+  `${(i * 0.5).toFixed(1)}s: ${frame.contextualMeaning || frame.analysis.substring(0, 300)}`
 ).join('\n')}
 
 AUDIO CONTEXT:
@@ -916,92 +916,186 @@ ${audioAnalysis.separatedAudio ? `
 - Audio Summary: ${audioAnalysis.separatedAudio.audioSummary || 'Not available'}
 ` : `Full Audio: ${transcript}`}
 
-Provide a comprehensive analysis in this JSON format:
+CRITICAL SCENE ANALYSIS REQUIREMENTS:
+A SCENE is defined by significant changes in:
+- VISUAL CUTS: Camera angle changes, shot type changes, framing shifts
+- CONTEXT CHANGES: Color grading shifts (color to black & white), lighting changes
+- AUDIO TRANSITIONS: Music changes, volume shifts, silence moments, new audio elements
+- TEXT REVEALS: New text overlays, text content changes, punchline reveals
+- NARRATIVE BEATS: Setup moments, tension building, ironic reveals, punchlines
+- VISUAL EFFECTS: Filters applied/removed, speed changes, transitions
+
+REQUIREMENTS:
+1. MUST identify each distinct scene based on these cinematic changes
+2. MUST capture the complete narrative arc through scene progression
+3. MUST analyze how each scene change serves the story/comedy
+4. MUST identify text overlay timing and content changes as scene markers
+5. MUST track psychological progression through visual and audio cues
+
+Provide a comprehensive premium analysis in this JSON format:
 
 {
   "videoCategory": {
     "category": "[educational/entertainment/promotional/tutorial/lifestyle/comedy/etc]",
     "confidence": 0.95,
-    "subcategory": "[specific type like how-to, reaction, review, etc]",
+    "subcategory": "[specific type like workplace comedy, tutorial, reaction, etc]",
     "platform": "[optimized for TikTok/Instagram/YouTube/etc]",
-    "reasoning": "[why this category was chosen]"
+    "reasoning": "[detailed explanation of why this category was chosen based on content analysis]"
   },
   "scenes": [
     {
       "sceneNumber": 1,
-      "timeRange": "0.0s-2.5s",
-      "title": "[descriptive title]",
-      "description": "[2-3 sentence overview of what happens]",
-      "duration": "2.5s",
+      "timeRange": "[start time to when first significant change occurs]",
+      "title": "[e.g., 'Opening Setup' or 'Initial Statement Scene']",
+      "description": "[Describe what happens until the first cinematic change - camera cut, text overlay, audio shift, etc.]",
+      "duration": "[actual duration until first scene change]",
+      "framing": {
+        "shotTypes": ["medium shot", "close-up"],
+        "cameraMovement": "[static/pan/zoom/handheld/tracking/etc]",
+        "composition": "[detailed composition analysis: rule of thirds, leading lines, depth, etc]"
+      },
+      "lighting": {
+        "style": "[natural/artificial/mixed]",
+        "mood": "[bright/dark/moody/dramatic/soft/etc]",
+        "direction": "[front-lit/back-lit/side-lit/top-lit/etc]",
+        "quality": "[hard/soft/diffused/harsh/etc]"
+      },
       "mood": {
-        "emotional": "[happy/serious/energetic/calm/tense/etc]",
-        "atmosphere": "[bright/dark/playful/professional/etc]",
-        "tone": "[casual/formal/humorous/dramatic/etc]"
+        "emotional": "[happy/serious/energetic/calm/tense/amused/optimistic/etc]",
+        "atmosphere": "[bright/dark/playful/professional/relaxed/intense/etc]",
+        "tone": "[casual/formal/humorous/dramatic/ironic/etc]"
       },
-      "contextualMeaning": {
-        "intent": "[what creator wants to achieve in this scene]",
-        "execution": "[specific techniques used to achieve intent]",
-        "impact": "[expected effect on viewer]",
-        "significance": "[why this scene matters to overall message]"
+      "actionMovement": {
+        "movement": "[detailed description of physical actions and movements]",
+        "direction": "[screen direction, eye lines, movement patterns]",
+        "pace": "[slow/medium/fast/dynamic/static]"
       },
-      "dialogue": {
-        "hasText": true,
-        "textContent": "[any visible text or spoken words]",
-        "textStyle": "[overlay style, font treatment if applicable]"
+      "audio": {
+        "music": "[description of background music, genre, mood]",
+        "soundDesign": "[ambient sounds, effects, audio atmosphere]",
+        "dialogue": "[spoken words or voice-over content]"
       },
       "visualEffects": {
-        "transitions": "[cuts/fades/wipes/etc]",
-        "effects": "[filters, overlays, speed changes, etc]",
-        "graphics": "[text overlays, graphics, UI elements]"
+        "transitions": "[cuts/fades/wipes/dissolves/etc]",
+        "effects": "[filters, color grading, speed changes, overlays, etc]",
+        "graphics": "[text overlays, graphics, UI elements, typography]"
       },
-      "framing": {
-        "shotTypes": ["close-up", "medium shot"],
-        "cameraMovement": "[static/pan/zoom/handheld/etc]",
-        "composition": "[visual composition notes]"
+      "settingEnvironment": {
+        "location": "[specific location description]",
+        "environment": "[indoor/outdoor/studio/natural/etc]",
+        "background": "[detailed background elements and their significance]"
       },
-      "subjects": {
-        "main": "[primary subjects/people]",
-        "focus": "[what draws attention]"
+      "subjectsFocus": {
+        "main": "[primary subjects, people, objects of focus]",
+        "secondary": "[supporting elements, background subjects]",
+        "focus": "[what specifically draws viewer attention and why]"
+      },
+      "intentImpactAnalysis": {
+        "creatorIntent": "[what the creator wants to achieve in this specific scene]",
+        "howExecuted": "[specific techniques and methods used to achieve the intent]",
+        "viewerImpact": "[expected psychological and emotional effect on viewers]",
+        "narrativeSignificance": "[how this scene contributes to the overall story/message - e.g., 'Sets up expectation for ironic payoff']"
+      },
+      "textDialogue": {
+        "content": "[exact text content visible on screen or spoken]",
+        "style": "[font style, overlay treatment, visual presentation]"
       }
+    },
+    {
+      "sceneNumber": 2,
+      "timeRange": "[when visual/audio/text change occurs]",
+      "title": "[e.g., 'Text Overlay Reinforcement' or 'Audio Shift Moment']",
+      "description": "[Describe the specific change that defines this new scene - camera cut, text reveal, music change, etc.]",
+      "duration": "[actual duration based on when changes occur]",
+      [... same structure as scene 1 ...]
+    },
+    {
+      "sceneNumber": 3,
+      "timeRange": "[when next significant change occurs]",
+      "title": "[e.g., 'Black & White Punchline Reveal' or 'Silent Moment for Impact']",
+      "description": "[The specific cinematic change that creates this scene - color shift, text punchline, audio drop, etc.]",
+      "duration": "[actual duration based on cinematic changes]",
+      [... same structure as scene 1 ...]
     }
   ],
   "hooks": [
     {
       "timestamp": "0.0s",
-      "type": "[visual_disrupter/question/positive_statement/negative_statement/action_statement]",
-      "description": "[what specifically happens that grabs attention]",
+      "type": "[visual_disrupter/question/positive_statement/negative_statement/action_statement/contrast/irony]",
+      "description": "[detailed description of what specifically happens that grabs attention]",
       "impact": "[high/medium/low]",
-      "element": "[specific visual or audio element that creates the hook]"
+      "element": "[specific visual, audio, or textual element that creates the hook]",
+      "psychologicalTrigger": "[what psychological mechanism this hook activates]"
     }
   ],
   "contextualAnalysis": {
     "creatorIntent": {
-      "primaryIntent": "[main goal: educate/entertain/sell/inspire/etc]",
-      "targetAudience": "[specific demographic or interest group]",
-      "desiredAction": "[what creator wants viewer to do]"
+      "primaryIntent": "[main goal: educate/entertain/sell/inspire/build community/etc]",
+      "targetAudience": "[specific demographic, interests, pain points they address]",
+      "desiredAction": "[what creator wants viewer to do: share, comment, follow, buy, etc]",
+      "howAchieved": "[specific methods used to achieve the intent]"
     },
     "messageDelivery": {
-      "coreMessage": "[main message in one sentence]",
-      "deliveryMethod": "[storytelling/demonstration/comparison/etc]",
-      "persuasionTechniques": ["[techniques used to convince/engage]"]
+      "coreMessage": "[main message distilled to one clear sentence]",
+      "deliveryMethod": "[storytelling/demonstration/comparison/humor/irony/etc]",
+      "persuasionTechniques": ["[specific techniques: social proof, authority, scarcity, etc]"],
+      "emotionalJourney": "[how viewer emotions are guided through the content - setup → anticipation → payoff]"
     },
-    "themes": ["[key themes like transformation, comparison, tutorial, etc]"],
-    "psychologicalAppeal": "[what psychological triggers are used]"
+    "themes": ["[key themes like workplace dynamics, expectations vs reality, etc]"],
+    "psychologicalAppeal": "[detailed analysis of psychological triggers and why they work]",
+    "socialContext": "[cultural references, shared experiences, universal truths addressed]"
   },
   "strategicOverview": {
-    "videoOverview": "[2-3 sentence summary of video content and purpose]",
-    "whyItWorks": "[core psychological/emotional appeal that makes this effective - focus on universal human experiences and recognition triggers]",
-    "successFormula": "[step-by-step breakdown: Scene 1 → Scene 2 → Scene 3 → Payoff with timing and reasoning]",
-    "universalPrinciples": "[underlying patterns that can be adapted across industries - extract the psychology, not just the mechanics]",
-    "technicalRequirements": "[essential production elements vs optional enhancements - minimum viable version requirements]",
-    "implementationFramework": "[actionable step-by-step process: 1. Setup requirements 2. Execution steps 3. Success metrics to watch for]",
-    "adaptabilityGuidelines": "[how to modify for different industries/audiences - provide 2-3 specific industry adaptation examples]",
-    "viralPotential": "[what makes this shareable/engaging - identify the social validation triggers and sharing motivations]"
+    "videoOverview": "[comprehensive 3-4 sentence summary covering content, purpose, and execution style]",
+    "narrativeArc": {
+      "arcType": "[comedy/educational/story/transformation/comparison/reveal/etc - based on video category]",
+      "structure": "[detailed breakdown of the complete narrative progression specific to content type]",
+      "keyBeats": "[specific story beats that drive the narrative forward - setup, conflict, resolution, etc]",
+      "examples": {
+        "comedy": "Setup (establishing normal situation) → Escalation (building tension/expectation) → Subversion (unexpected twist) → Punchline (comedic payoff) → Resolution (aftermath/reaction)",
+        "educational": "Hook (problem/question) → Context (why it matters) → Steps (tutorial progression) → Demonstration (showing results) → Reinforcement (key takeaways)",
+        "story": "Ordinary World → Inciting Incident → Rising Action → Climax → Resolution → New Normal",
+        "transformation": "Before State → Catalyst → Process → Obstacles → Breakthrough → After State",
+        "comparison": "Option A Introduction → Option B Introduction → Contrast Building → Decisive Moment → Clear Winner → Justification"
+      }
+    },
+    "whyItWorks": "[detailed analysis of core psychological/emotional appeal, focusing on universal human experiences, recognition triggers, and social validation mechanisms that make this content effective]",
+    "successFormula": "[detailed step-by-step breakdown with timing: Scene 1 (setup/hook) → Scene 2 (development) → Scene 3 (escalation) → Scene 4 (payoff/punchline), including psychological reasoning for each transition and how it serves the narrative arc]",
+    "universalPrinciples": "[underlying psychological and structural patterns that can be adapted across industries - extract the core psychology, not just surface mechanics. Include principles like contrast, expectation management, social proof, etc]",
+    "technicalRequirements": "[detailed breakdown of essential vs optional production elements: minimum viable version requirements, professional enhancements, budget considerations, equipment needs]",
+    "implementationFramework": {
+      "preProduction": "[concept development, scenario planning, script/storyboard creation, location scouting, talent casting, equipment planning, shot list creation]",
+      "production": "[filming techniques, camera work, framing, lighting setup, talent direction, audio recording, multiple takes/angles, on-set execution]", 
+      "postProduction": "[editing, text overlays, graphics, color grading, audio mixing, transitions, effects, timing adjustments, final output optimization]",
+      "successMetrics": "[engagement rates, completion rates, shares, comments, saves, click-through rates, conversion metrics, audience retention graphs]"
+    },
+    "adaptabilityGuidelines": "[detailed guidance on modifying for different industries/audiences with 3-4 specific industry adaptation examples showing how core principles translate: retail, healthcare, tech, education, etc]",
+    "viralPotential": "[comprehensive analysis of shareability factors: social validation triggers, sharing motivations, platform-specific optimization, audience engagement patterns, and viral mechanics]",
+    "resourceScaling": "[budget considerations from minimum viable to professional production, including equipment, location, talent, and post-production requirements]"
   },
-  "contentStructure": "[detailed analysis of how the content flows and builds engagement from start to finish, including pacing, escalation patterns, and narrative techniques that create the viral effect]"
+  "contentStructure": "[detailed analysis of narrative flow, pacing strategies, engagement techniques, escalation patterns, and specific structural elements that create viral potential. Include timing analysis, attention retention techniques, and psychological progression through the content]"
 }
 
-CRITICAL: Focus on WHY techniques work psychologically, not just WHAT happens. Identify universal patterns that can be replicated across different contexts. Explain the underlying success formula that makes this content effective and shareable.`;
+CRITICAL INSTRUCTIONS:
+1. Identify scenes based on CINEMATIC CHANGES: visual cuts, context shifts, audio transitions, text reveals
+2. MUST capture the complete story arc including setup, development, and payoff moments
+3. Each scene represents a distinct cinematic or narrative change, not arbitrary time segments
+4. Pay special attention to text overlay changes - they often mark new scenes and contain punchlines
+5. Analyze how each scene change serves the psychological progression and narrative timing
+6. Focus on WHY each cinematic choice works and HOW it contributes to the viral effect
+7. NARRATIVE ARC ANALYSIS: Identify the specific narrative structure based on content type:
+   - COMEDY: Setup → Build → Subversion → Punchline → Resolution
+   - EDUCATIONAL: Hook → Context → Steps → Demo → Reinforcement  
+   - STORY: Ordinary World → Inciting Incident → Rising Action → Climax → Resolution
+   - TRANSFORMATION: Before → Catalyst → Process → Breakthrough → After
+   - COMPARISON: Option A → Option B → Contrast → Decision → Winner
+8. In strategicOverview.narrativeArc, provide the COMPLETE narrative progression showing how each scene serves the overall story structure
+9. Explain how the narrative arc creates psychological engagement and drives viewer retention
+10. PRODUCTION PHASE CATEGORIZATION - Ensure proper separation:
+    - PRE-PRODUCTION: Concept development, planning, scripting, casting, location scouting, equipment planning
+    - PRODUCTION: Actual filming, camera work, lighting, talent direction, audio recording, on-set execution
+    - POST-PRODUCTION: Editing, text overlays, graphics, color grading, audio mixing, effects, transitions
+    - SUCCESS METRICS: Engagement rates, completion rates, shares, comments, analytics to track`;
 
     const response = await handleRateLimit(async () => {
       return await openai.chat.completions.create({
@@ -1016,7 +1110,7 @@ CRITICAL: Focus on WHY techniques work psychologically, not just WHAT happens. I
             content: comprehensivePrompt
           }
         ],
-        max_tokens: 4000,
+        max_tokens: 8000,
         temperature: 0.3
       });
     });
@@ -1800,7 +1894,7 @@ Create a comprehensive analysis following this structure:
 Focus on WHY this content works, not just WHAT happens. Identify the systematic approach that makes it effective and replicable. Write as if training someone to create similar content.`
           }
         ],
-        max_tokens: 2000
+        max_tokens: 8000
       });
 
       return response.choices[0].message.content;
