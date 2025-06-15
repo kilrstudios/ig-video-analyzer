@@ -27,9 +27,6 @@ yarn-error.log*
 # local env files
 .env*.local
 
-# vercel
-.vercel
-
 # typescript
 *.tsbuildinfo
 next-env.d.ts
@@ -62,3 +59,11 @@ ehthumbs.db
 Thumbs.db
 
 /src/generated/prisma
+
+# Temporary files
+/temp/**/*.mp4
+/temp/**/*.mp3
+/temp/**/*.m4a
+/temp/**/*.jpg
+/temp/**/frames/
+/temp/**/frames_*/

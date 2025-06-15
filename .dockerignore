@@ -6,7 +6,6 @@ node_modules
 
 # Next.js build artifacts and cache
 .next
-.vercel
 
 # Local development files
 npm-debug.log*
