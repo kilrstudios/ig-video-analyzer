@@ -81,6 +81,43 @@ body {
   -moz-osx-font-smoothing: grayscale;
 }
 
+/* Container Utilities */
+.container-responsive {
+  width: 100%;
+  margin-left: auto;
+  margin-right: auto;
+  padding-left: 1rem;
+  padding-right: 1rem;
+}
+
+@media (min-width: 640px) {
+  .container-responsive {
+    max-width: 640px;
+    padding-left: 1.5rem;
+    padding-right: 1.5rem;
+  }
+}
+
+@media (min-width: 768px) {
+  .container-responsive {
+    max-width: 768px;
+  }
+}
+
+@media (min-width: 1024px) {
+  .container-responsive {
+    max-width: 1024px;
+    padding-left: 2rem;
+    padding-right: 2rem;
+  }
+}
+
+@media (min-width: 1280px) {
+  .container-responsive {
+    max-width: 1280px;
+  }
+}
+
 /* Custom Components */
 .btn-primary {
   background: linear-gradient(to right, #2563eb, #9333ea);
@@ -97,11 +134,18 @@ body {
   align-items: center;
   justify-content: center;
   gap: 0.5rem;
+  text-decoration: none;
 }
 
 .btn-primary:hover {
   box-shadow: 0 20px 25px -5px rgb(0 0 0 / 0.1), 0 8px 10px -6px rgb(0 0 0 / 0.1);
   transform: translateY(-2px);
+}
+
+.btn-primary:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  transform: translateY(0);
 }
 
 .btn-secondary {
@@ -119,6 +163,7 @@ body {
   align-items: center;
   justify-content: center;
   gap: 0.5rem;
+  text-decoration: none;
 }
 
 .btn-secondary:hover {
@@ -149,6 +194,7 @@ body {
   box-shadow: 0 20px 25px -5px rgb(0 0 0 / 0.1), 0 8px 10px -6px rgb(0 0 0 / 0.1);
   border: 1px solid #f3f4f6;
   overflow: hidden;
+  width: 100%;
 }
 
 .card-header {
@@ -160,6 +206,14 @@ body {
   padding: 1.5rem;
 }
 
+/* Responsive card padding */
+@media (max-width: 640px) {
+  .card-header,
+  .card-body {
+    padding: 1rem;
+  }
+}
+
 .input-field {
   width: 100%;
   padding: 0.75rem 1rem;
@@ -169,6 +223,7 @@ body {
   outline: none;
   color: #111827;
   background: white;
+  font-size: 1rem;
 }
 
 .input-field::placeholder {
@@ -296,9 +351,15 @@ body {
   line-height: 1.2;
 }
 
+@media (min-width: 640px) {
+  .text-display {
+    font-size: 2.75rem;
+  }
+}
+
 @media (min-width: 768px) {
   .text-display {
-    font-size: 3rem;
+    font-size: 3.25rem;
   }
 }
 
@@ -327,11 +388,18 @@ body {
 }
 
 .text-title {
-  font-size: 1.25rem;
+  font-size: 1.125rem;
   font-weight: 600;
+  line-height: 1.4;
 }
 
 @media (min-width: 768px) {
+  .text-title {
+    font-size: 1.25rem;
+  }
+}
+
+@media (min-width: 1024px) {
   .text-title {
     font-size: 1.5rem;
   }
@@ -351,6 +419,37 @@ body {
 .text-caption {
   font-size: 0.875rem;
   color: #6b7280;
+  line-height: 1.5;
+}
+
+/* Grid Layout Helpers */
+.grid-responsive {
+  display: grid;
+  gap: 2rem;
+  grid-template-columns: 1fr;
+}
+
+@media (min-width: 1024px) {
+  .grid-responsive {
+    grid-template-columns: 2fr 1fr;
+  }
+}
+
+/* Spacing Utilities */
+.section-spacing {
+  margin-bottom: 3rem;
+}
+
+@media (min-width: 768px) {
+  .section-spacing {
+    margin-bottom: 4rem;
+  }
+}
+
+@media (min-width: 1024px) {
+  .section-spacing {
+    margin-bottom: 5rem;
+  }
 }
 
 

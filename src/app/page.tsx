@@ -362,66 +362,65 @@ export default function Home() {
       <div className="absolute inset-0 bg-[url('data:image/svg+xml,%3Csvg%20width%3D%2260%22%20height%3D%2260%22%20viewBox%3D%220%200%2060%2060%22%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%3E%3Cg%20fill%3D%22none%22%20fill-rule%3D%22evenodd%22%3E%3Cg%20fill%3D%22%23ffffff%22%20fill-opacity%3D%220.05%22%3E%3Ccircle%20cx%3D%2230%22%20cy%3D%2230%22%20r%3D%222%22/%3E%3C/g%3E%3C/g%3E%3C/svg%3E')] opacity-20"></div>
       
       <main className="relative z-10 min-h-screen">
-        <div className="container mx-auto px-4 py-8 max-w-7xl">
+        {/* Container with proper max-width */}
+        <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
           {/* Header Section */}
-          <header className="flex flex-col lg:flex-row justify-between items-center mb-12 gap-6">
-            <div className="text-center lg:text-left">
-              <h1 className="text-display font-bold text-white mb-4 animate-float">
+          <header className="text-center mb-16">
+            <div className="max-w-4xl mx-auto">
+              <h1 className="text-display font-bold text-white mb-6 animate-float">
                 Instagram Video
                 <span className="block gradient-text bg-gradient-to-r from-yellow-300 to-pink-300 bg-clip-text text-transparent">
                   Analyzer
                 </span>
               </h1>
-              <p className="text-body text-blue-100 max-w-2xl">
+              <p className="text-body text-blue-100 mb-8 max-w-2xl mx-auto">
                 Transform your content strategy with AI-powered video analysis. 
                 Get detailed insights, scene breakdowns, and strategic recommendations.
               </p>
-            </div>
-            
-            {/* Auth Section */}
-            <div className="flex items-center gap-4">
-              {loading ? (
-                <div className="flex items-center gap-3">
+              
+              {/* Auth Section - Centered */}
+              <div className="flex justify-center">
+                {loading ? (
                   <div className="loading-skeleton h-12 w-32 rounded-xl"></div>
-                </div>
-              ) : user ? (
-                <div className="glass-card rounded-2xl p-4 flex items-center gap-4">
-                  <div className="text-right">
-                    <div className="text-sm font-semibold text-white">
-                      {profile?.full_name || user.email}
+                ) : user ? (
+                  <div className="glass-card rounded-2xl p-4 flex items-center gap-4">
+                    <div className="text-right">
+                      <div className="text-sm font-semibold text-white">
+                        {profile?.full_name || user.email}
+                      </div>
+                      <div className="text-xs text-blue-200 flex items-center gap-1">
+                        <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
+                          <path d="M8.433 7.418c.155-.103.346-.196.567-.267v1.698a2.305 2.305 0 01-.567-.267C8.07 8.34 8 8.114 8 8c0-.114.07-.34.433-.582zM11 12.849v-1.698c.22.071.412.164.567.267.364.243.433.468.433.582 0 .114-.07.34-.433.582a2.305 2.305 0 01-.567.267z"/>
+                          <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-13a1 1 0 10-2 0v.092a4.535 4.535 0 00-1.676.662C6.602 6.234 6 7.009 6 8c0 .99.602 1.765 1.324 2.246.48.32 1.054.545 1.676.662v1.941c-.391-.127-.68-.317-.843-.504a1 1 0 10-1.51 1.31c.562.649 1.413 1.076 2.353 1.253V15a1 1 0 102 0v-.092a4.535 4.535 0 001.676-.662C13.398 13.766 14 12.991 14 12c0-.99-.602-1.765-1.324-2.246A4.535 4.535 0 0011 9.092V7.151c.391.127.68.317.843.504a1 1 0 101.511-1.31c-.563-.649-1.413-1.076-2.354-1.253V5z" clipRule="evenodd"/>
+                        </svg>
+                        {profile?.credits || 0} credits
+                      </div>
                     </div>
-                    <div className="text-xs text-blue-200 flex items-center gap-1">
-                      <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
-                        <path d="M8.433 7.418c.155-.103.346-.196.567-.267v1.698a2.305 2.305 0 01-.567-.267C8.07 8.34 8 8.114 8 8c0-.114.07-.34.433-.582zM11 12.849v-1.698c.22.071.412.164.567.267.364.243.433.468.433.582 0 .114-.07.34-.433.582a2.305 2.305 0 01-.567.267z"/>
-                        <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-13a1 1 0 10-2 0v.092a4.535 4.535 0 00-1.676.662C6.602 6.234 6 7.009 6 8c0 .99.602 1.765 1.324 2.246.48.32 1.054.545 1.676.662v1.941c-.391-.127-.68-.317-.843-.504a1 1 0 10-1.51 1.31c.562.649 1.413 1.076 2.353 1.253V15a1 1 0 102 0v-.092a4.535 4.535 0 001.676-.662C13.398 13.766 14 12.991 14 12c0-.99-.602-1.765-1.324-2.246A4.535 4.535 0 0011 9.092V7.151c.391.127.68.317.843.504a1 1 0 101.511-1.31c-.563-.649-1.413-1.076-2.354-1.253V5z" clipRule="evenodd"/>
-                      </svg>
-                      {profile?.credits || 0} credits
-                    </div>
+                    <button
+                      onClick={() => setShowUserDashboard(true)}
+                      className="btn-secondary text-sm"
+                    >
+                      Dashboard
+                    </button>
                   </div>
+                ) : (
                   <button
-                    onClick={() => setShowUserDashboard(true)}
-                    className="btn-secondary text-sm"
+                    onClick={() => setShowAuthModal(true)}
+                    className="btn-primary"
                   >
-                    Dashboard
+                    <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 16l-4-4m0 0l4-4m-4 4h14m-5 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h7a3 3 0 013 3v1" />
+                    </svg>
+                    Sign In
                   </button>
-                </div>
-              ) : (
-                <button
-                  onClick={() => setShowAuthModal(true)}
-                  className="btn-primary"
-                >
-                  <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 16l-4-4m0 0l4-4m-4 4h14m-5 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h7a3 3 0 013 3v1" />
-                  </svg>
-                  Sign In
-                </button>
-              )}
+                )}
+              </div>
             </div>
           </header>
 
-          {/* Main Content */}
-          <div className="grid lg:grid-cols-3 gap-8 mb-12">
-            {/* Main Form Card */}
+          {/* Main Content Grid */}
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 max-w-5xl mx-auto">
+            {/* Main Form Card - Takes 2 columns on large screens */}
             <div className="lg:col-span-2">
               <div className="card">
                 <div className="card-header">
@@ -487,37 +486,37 @@ export default function Home() {
               </div>
             </div>
 
-            {/* Features Sidebar */}
+            {/* Features Sidebar - Takes 1 column on large screens */}
             <div className="space-y-6">
               <div className="card">
                 <div className="card-body">
                   <h3 className="text-title text-gray-900 mb-4">✨ What You Get</h3>
-                  <div className="space-y-3">
+                  <div className="space-y-4">
                     <div className="flex items-start gap-3">
                       <div className="w-2 h-2 bg-blue-500 rounded-full mt-2 flex-shrink-0"></div>
                       <div>
-                        <p className="font-medium text-gray-900">Scene Analysis</p>
+                        <p className="font-medium text-gray-900 text-sm">Scene Analysis</p>
                         <p className="text-caption">Frame-by-frame breakdown with timing</p>
                       </div>
                     </div>
                     <div className="flex items-start gap-3">
                       <div className="w-2 h-2 bg-purple-500 rounded-full mt-2 flex-shrink-0"></div>
                       <div>
-                        <p className="font-medium text-gray-900">Hook Identification</p>
+                        <p className="font-medium text-gray-900 text-sm">Hook Identification</p>
                         <p className="text-caption">Find what grabs viewer attention</p>
                       </div>
                     </div>
                     <div className="flex items-start gap-3">
                       <div className="w-2 h-2 bg-green-500 rounded-full mt-2 flex-shrink-0"></div>
                       <div>
-                        <p className="font-medium text-gray-900">Strategic Insights</p>
+                        <p className="font-medium text-gray-900 text-sm">Strategic Insights</p>
                         <p className="text-caption">Actionable content recommendations</p>
                       </div>
                     </div>
                     <div className="flex items-start gap-3">
                       <div className="w-2 h-2 bg-yellow-500 rounded-full mt-2 flex-shrink-0"></div>
                       <div>
-                        <p className="font-medium text-gray-900">PDF Report</p>
+                        <p className="font-medium text-gray-900 text-sm">PDF Report</p>
                         <p className="text-caption">Downloadable analysis document</p>
                       </div>
                     </div>
@@ -541,7 +540,7 @@ export default function Home() {
 
           {/* Error Display */}
           {error && (
-            <div className="card mb-8">
+            <div className="card mb-8 max-w-3xl mx-auto mt-8">
               <div className="card-body">
                 <div className="flex items-center gap-3 text-red-600">
                   <svg className="w-5 h-5 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
@@ -555,7 +554,7 @@ export default function Home() {
 
           {/* Progress Section */}
           {isAnalyzing && (
-            <div className="card mb-8">
+            <div className="card mb-8 max-w-3xl mx-auto mt-8">
               <div className="card-body">
                 <div className="flex items-center gap-3 mb-4">
                   <div className="w-8 h-8 bg-gradient-to-r from-blue-500 to-purple-600 rounded-full flex items-center justify-center animate-pulse-slow">
@@ -598,11 +597,13 @@ export default function Home() {
 
           {/* Results Section */}
           {analysisResults && (
-            <VideoAnalysis 
-              results={analysisResults} 
-              onDownloadPdf={handleDownloadPdf}
-              isGeneratingPdf={isGeneratingPdf}
-            />
+            <div className="max-w-5xl mx-auto mt-8">
+              <VideoAnalysis 
+                results={analysisResults} 
+                onDownloadPdf={handleDownloadPdf}
+                isGeneratingPdf={isGeneratingPdf}
+              />
+            </div>
           )}
         </div>
       </main>
