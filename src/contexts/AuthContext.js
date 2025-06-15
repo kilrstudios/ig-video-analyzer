@@ -19,6 +19,12 @@ export const AuthProvider = ({ children }) => {
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
+    // Only initialize auth if Supabase is available
+    if (!supabase) {
+      setLoading(false)
+      return
+    }
+
     // Get initial session
     const getInitialSession = async () => {
       const { data: { session } } = await supabase.auth.getSession()
@@ -58,6 +64,10 @@ export const AuthProvider = ({ children }) => {
   }
 
   const signIn = async (email, password) => {
+    if (!supabase) {
+      return { error: 'Supabase not initialized' }
+    }
+    
     const { data, error } = await supabase.auth.signInWithPassword({
       email,
       password,
@@ -66,6 +76,10 @@ export const AuthProvider = ({ children }) => {
   }
 
   const signUp = async (email, password, fullName) => {
+    if (!supabase) {
+      return { error: 'Supabase not initialized' }
+    }
+    
     const { data, error } = await supabase.auth.signUp({
       email,
       password,
@@ -79,6 +93,10 @@ export const AuthProvider = ({ children }) => {
   }
 
   const signOut = async () => {
+    if (!supabase) {
+      return { error: 'Supabase not initialized' }
+    }
+    
     const { error } = await supabase.auth.signOut()
     if (!error) {
       setUser(null)
@@ -89,6 +107,7 @@ export const AuthProvider = ({ children }) => {
 
   const updateProfile = async (updates) => {
     if (!user) return { error: 'No user logged in' }
+    if (!supabase) return { error: 'Supabase not initialized' }
     
     const { data, error } = await supabase
       .from('user_profiles')

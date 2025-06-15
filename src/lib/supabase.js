@@ -3,14 +3,27 @@ import { createClient } from '@supabase/supabase-js'
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
 
-if (!supabaseUrl || !supabaseAnonKey) {
-  throw new Error('Missing Supabase environment variables')
+// Create a function to get the Supabase client
+const getSupabaseClient = () => {
+  if (!supabaseUrl || !supabaseAnonKey) {
+    if (typeof window !== 'undefined') {
+      // Only throw error on client side
+      throw new Error('Missing Supabase environment variables')
+    }
+    // Return null during build time
+    return null
+  }
+  return createClient(supabaseUrl, supabaseAnonKey)
 }
 
-export const supabase = createClient(supabaseUrl, supabaseAnonKey)
+export const supabase = getSupabaseClient()
 
 // Helper function to get the current user's profile
 export const getUserProfile = async (userId) => {
+  if (!supabase) {
+    throw new Error('Supabase client not initialized')
+  }
+  
   const { data, error } = await supabase
     .from('user_profiles')
     .select('*')
@@ -26,6 +39,10 @@ export const getUserProfile = async (userId) => {
 
 // Helper function to update user's credit balance
 export const updateUserCredits = async (userId, creditsUsed) => {
+  if (!supabase) {
+    throw new Error('Supabase client not initialized')
+  }
+  
   const { data, error } = await supabase.rpc('deduct_credits', {
     user_id: userId,
     credits_to_deduct: creditsUsed
@@ -40,6 +57,10 @@ export const updateUserCredits = async (userId, creditsUsed) => {
 
 // Helper function to save analysis
 export const saveAnalysis = async (userId, analysisData) => {
+  if (!supabase) {
+    throw new Error('Supabase client not initialized')
+  }
+  
   const { data, error } = await supabase
     .from('video_analyses')
     .insert({
@@ -61,6 +82,10 @@ export const saveAnalysis = async (userId, analysisData) => {
 
 // Helper function to get user's analysis history
 export const getUserAnalyses = async (userId, limit = 10) => {
+  if (!supabase) {
+    throw new Error('Supabase client not initialized')
+  }
+  
   const { data, error } = await supabase
     .from('video_analyses')
     .select('*')
