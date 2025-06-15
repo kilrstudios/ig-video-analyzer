@@ -6,11 +6,7 @@ const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
 // Create a function to get the Supabase client
 const getSupabaseClient = () => {
   if (!supabaseUrl || !supabaseAnonKey) {
-    if (typeof window !== 'undefined') {
-      // Only throw error on client side
-      throw new Error('Missing Supabase environment variables')
-    }
-    // Return null during build time
+    console.warn('Supabase environment variables not found. Some features may not work.')
     return null
   }
   return createClient(supabaseUrl, supabaseAnonKey)
@@ -18,10 +14,15 @@ const getSupabaseClient = () => {
 
 export const supabase = getSupabaseClient()
 
+// Helper function to check if Supabase is available
+export const isSupabaseAvailable = () => {
+  return supabase !== null
+}
+
 // Helper function to get the current user's profile
 export const getUserProfile = async (userId) => {
   if (!supabase) {
-    throw new Error('Supabase client not initialized')
+    throw new Error('Supabase client not initialized. Please check your environment variables.')
   }
   
   const { data, error } = await supabase
@@ -40,7 +41,7 @@ export const getUserProfile = async (userId) => {
 // Helper function to update user's credit balance
 export const updateUserCredits = async (userId, creditsUsed) => {
   if (!supabase) {
-    throw new Error('Supabase client not initialized')
+    throw new Error('Supabase client not initialized. Please check your environment variables.')
   }
   
   const { data, error } = await supabase.rpc('deduct_credits', {
@@ -58,7 +59,7 @@ export const updateUserCredits = async (userId, creditsUsed) => {
 // Helper function to save analysis
 export const saveAnalysis = async (userId, analysisData) => {
   if (!supabase) {
-    throw new Error('Supabase client not initialized')
+    throw new Error('Supabase client not initialized. Please check your environment variables.')
   }
   
   const { data, error } = await supabase
@@ -83,7 +84,7 @@ export const saveAnalysis = async (userId, analysisData) => {
 // Helper function to get user's analysis history
 export const getUserAnalyses = async (userId, limit = 10) => {
   if (!supabase) {
-    throw new Error('Supabase client not initialized')
+    throw new Error('Supabase client not initialized. Please check your environment variables.')
   }
   
   const { data, error } = await supabase

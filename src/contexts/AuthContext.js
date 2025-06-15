@@ -1,7 +1,7 @@
 'use client'
 
 import { createContext, useContext, useEffect, useState } from 'react'
-import { supabase, getUserProfile } from '../lib/supabase'
+import { supabase, getUserProfile, isSupabaseAvailable } from '../lib/supabase'
 
 const AuthContext = createContext({})
 
@@ -17,20 +17,27 @@ export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null)
   const [profile, setProfile] = useState(null)
   const [loading, setLoading] = useState(true)
+  const [supabaseError, setSupabaseError] = useState(null)
 
   useEffect(() => {
-    // Only initialize auth if Supabase is available
-    if (!supabase) {
+    // Check if Supabase is available
+    if (!isSupabaseAvailable()) {
+      setSupabaseError('Supabase is not configured. Authentication features are disabled.')
       setLoading(false)
       return
     }
 
     // Get initial session
     const getInitialSession = async () => {
-      const { data: { session } } = await supabase.auth.getSession()
-      if (session?.user) {
-        setUser(session.user)
-        await loadUserProfile(session.user.id)
+      try {
+        const { data: { session } } = await supabase.auth.getSession()
+        if (session?.user) {
+          setUser(session.user)
+          await loadUserProfile(session.user.id)
+        }
+      } catch (error) {
+        console.error('Error getting initial session:', error)
+        setSupabaseError('Failed to initialize authentication')
       }
       setLoading(false)
     }
@@ -40,12 +47,16 @@ export const AuthProvider = ({ children }) => {
     // Listen for auth changes
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       async (event, session) => {
-        if (session?.user) {
-          setUser(session.user)
-          await loadUserProfile(session.user.id)
-        } else {
-          setUser(null)
-          setProfile(null)
+        try {
+          if (session?.user) {
+            setUser(session.user)
+            await loadUserProfile(session.user.id)
+          } else {
+            setUser(null)
+            setProfile(null)
+          }
+        } catch (error) {
+          console.error('Error handling auth state change:', error)
         }
         setLoading(false)
       }
@@ -64,8 +75,8 @@ export const AuthProvider = ({ children }) => {
   }
 
   const signIn = async (email, password) => {
-    if (!supabase) {
-      return { error: 'Supabase not initialized' }
+    if (!isSupabaseAvailable()) {
+      return { error: 'Supabase not configured' }
     }
     
     const { data, error } = await supabase.auth.signInWithPassword({
@@ -76,8 +87,8 @@ export const AuthProvider = ({ children }) => {
   }
 
   const signUp = async (email, password, fullName) => {
-    if (!supabase) {
-      return { error: 'Supabase not initialized' }
+    if (!isSupabaseAvailable()) {
+      return { error: 'Supabase not configured' }
     }
     
     const { data, error } = await supabase.auth.signUp({
@@ -93,8 +104,8 @@ export const AuthProvider = ({ children }) => {
   }
 
   const signOut = async () => {
-    if (!supabase) {
-      return { error: 'Supabase not initialized' }
+    if (!isSupabaseAvailable()) {
+      return { error: 'Supabase not configured' }
     }
     
     const { error } = await supabase.auth.signOut()
@@ -107,7 +118,7 @@ export const AuthProvider = ({ children }) => {
 
   const updateProfile = async (updates) => {
     if (!user) return { error: 'No user logged in' }
-    if (!supabase) return { error: 'Supabase not initialized' }
+    if (!isSupabaseAvailable()) return { error: 'Supabase not configured' }
     
     const { data, error } = await supabase
       .from('user_profiles')
@@ -133,6 +144,8 @@ export const AuthProvider = ({ children }) => {
     user,
     profile,
     loading,
+    supabaseError,
+    isSupabaseAvailable: isSupabaseAvailable(),
     signIn,
     signUp,
     signOut,
