@@ -17,4 +17,30 @@
 body {
   color: var(--foreground);
   background: var(--background);
+  font-family: system-ui, -apple-system, sans-serif;
+}
+
+/* Ensure Tailwind utilities are working */
+@layer utilities {
+  .debug-css {
+    border: 2px solid red !important;
+    background: yellow !important;
+  }
+}
+
+/* Force some basic styling to ensure CSS is loading */
+.bg-blue-600 {
+  background-color: #2563eb !important;
+}
+
+.text-white {
+  color: #ffffff !important;
+}
+
+.rounded-lg {
+  border-radius: 0.5rem !important;
+}
+
+.p-4 {
+  padding: 1rem !important;
 }
