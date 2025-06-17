@@ -1,10 +1,9 @@
 'use client';
 
-import { useState, FormEvent } from 'react';
+import { useState, FormEvent, useEffect } from 'react';
 import VideoUploader from '@/components/VideoUploader';
 import VideoAnalysis from '@/components/VideoAnalysis';
 import AuthModal from '@/components/AuthModal';
-import UserDashboard from '@/components/UserDashboard';
 import { useAuth } from '@/contexts/AuthContext';
 
 // ... existing interfaces ...
@@ -202,7 +201,7 @@ interface VideoAnalysis {
 }
 
 export default function Home() {
-  const { user, profile, loading } = useAuth() as any;
+  const { user, profile, loading, refreshProfile, signOut } = useAuth() as any;
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [analysisResults, setAnalysisResults] = useState<VideoAnalysis | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -210,10 +209,25 @@ export default function Home() {
   const [estimatedDuration, setEstimatedDuration] = useState<string>('');
   const [showCostApproval, setShowCostApproval] = useState<boolean>(false);
   const [analysisProgress, setAnalysisProgress] = useState<number>(0);
+  const [analysisStatus, setAnalysisStatus] = useState<string>('');
+  const [timeEstimate, setTimeEstimate] = useState<{elapsed: number, remaining: number, total: number} | null>(null);
   const [igUrl, setIgUrl] = useState('');
-  const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
+  const [uploadedFile, setUploadedFile] = useState<File | null>(null);
+  const [requestId, setRequestId] = useState<string | null>(null);
+  const [progress, setProgress] = useState<{phase: string, progress: number, message: string} | null>(null);
+  const [isLoadingAuth, setIsLoadingAuth] = useState(true);
   const [showAuthModal, setShowAuthModal] = useState(false);
-  const [showUserDashboard, setShowUserDashboard] = useState(false);
+  const [analysisMode, setAnalysisMode] = useState<'fine' | 'standard' | 'broad'>('standard');
+  const [estimatedCost, setEstimatedCost] = useState<number | null>(null);
+  const [inputMethod, setInputMethod] = useState<'url' | 'upload' | 'fbad'>('url');
+  const [fbAdUrl, setFbAdUrl] = useState('');
+  const [isCopying, setIsCopying] = useState(false);
+
+  useEffect(() => {
+    if (profile) {
+      console.log('Loaded user profile', profile);
+    }
+  }, [profile]);
 
   const estimateVideoDuration = async (url: string) => {
     const response = await fetch('/api/estimate-duration', {
@@ -231,234 +245,788 @@ export default function Home() {
     return await response.json();
   };
 
-  const handleAnalyze = async (url: string) => {
+  const handleAnalyze = async (urlOrFile: string | File) => {
+    if (!user) {
+      setShowAuthModal(true);
+      return;
+    }
+
+    setIsAnalyzing(true);
+    setError(null);
+    setAnalysisResults(null);
+    setProgress(null);
+    setAnalysisProgress(0);
+    setAnalysisStatus('Starting analysis...');
+    setTimeEstimate(null);
+
+    const newRequestId = `req_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    setRequestId(newRequestId);
+
+    // Start progress polling
+    const progressInterval = setInterval(async () => {
+      try {
+        const progressResponse = await fetch(`/api/progress?requestId=${newRequestId}`);
+        if (progressResponse.ok) {
+          const progressData = await progressResponse.json();
+          setProgress(progressData);
+          setAnalysisProgress(progressData.progress || 0);
+          setAnalysisStatus(progressData.message || 'Processing...');
+          if (progressData.details?.timeEstimate) {
+            setTimeEstimate(progressData.details.timeEstimate);
+          }
+          
+          // Stop polling when complete
+          if (progressData.progress >= 100) {
+            clearInterval(progressInterval);
+          }
+        }
+      } catch (err) {
+        console.warn('Progress polling error:', err);
+      }
+    }, 1000); // Poll every second
+
     try {
-      setIsAnalyzing(true);
-      setError(null);
-      setAnalysisProgress(0);
-
-      // Simulate progress updates during analysis
-      const progressInterval = setInterval(() => {
-        setAnalysisProgress(prev => {
-          if (prev < 90) return prev + Math.random() * 10;
-          return prev;
+      let response;
+      
+      if (typeof urlOrFile === 'string') {
+        // URL analysis
+        response = await fetch('/api/analyze', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ 
+            url: urlOrFile,
+            userId: user.id,
+            requestId: newRequestId
+          })
         });
-      }, 3000);
+      } else {
+        // File upload analysis
+        const formData = new FormData();
+        formData.append('video', urlOrFile);
+        formData.append('userId', user.id);
+        formData.append('requestId', newRequestId);
 
-      const response = await fetch('/api/analyze', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ 
-          url,
-          userId: user?.id // Include user ID if logged in
-        }),
-      });
-
-      clearInterval(progressInterval);
-      setAnalysisProgress(100);
+        response = await fetch('/api/analyze-upload', {
+          method: 'POST',
+          body: formData
+        });
+      }
 
       if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.error || 'Failed to analyze video');
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Analysis failed');
       }
 
-      const data = await response.json();
-      console.log('Analysis results received:', data);
-      console.log('Video category:', data.videoCategory);
-      console.log('Hooks:', data.hooks);
-      console.log('Contextual analysis:', data.contextualAnalysis);
-      setAnalysisResults(data);
+      const result = await response.json();
+      setAnalysisResults(result);
       
-      // Refresh user profile to update credits if user is logged in
-      if (user) {
-        const { refreshProfile } = useAuth() as any;
-        refreshProfile();
+      // Refresh user profile to update credits
+      if (refreshProfile) {
+        await refreshProfile();
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'An error occurred during analysis');
       console.error('Analysis error:', err);
+      setError(err instanceof Error ? err.message : 'An unexpected error occurred');
     } finally {
+      clearInterval(progressInterval);
       setIsAnalyzing(false);
+      setRequestId(null);
+      setProgress(null);
       setAnalysisProgress(0);
+      setAnalysisStatus('');
+      setTimeEstimate(null);
+    }
+  };
+
+  const handleAnalyzeFbAd = async (fbAdUrl: string) => {
+    if (!user) {
+      setShowAuthModal(true);
+      return;
+    }
+
+    setIsAnalyzing(true);
+    setError(null);
+    setAnalysisResults(null);
+    setProgress(null);
+    setAnalysisProgress(5); // Start at 5% for extraction
+    setAnalysisStatus('Extracting video from Facebook ad...');
+    setTimeEstimate(null);
+
+    const newRequestId = `req_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    setRequestId(newRequestId);
+
+    // Start progress polling
+    const progressInterval = setInterval(async () => {
+      try {
+        const progressResponse = await fetch(`/api/progress?requestId=${newRequestId}`);
+        if (progressResponse.ok) {
+          const progressData = await progressResponse.json();
+          setProgress(progressData);
+          setAnalysisProgress(progressData.progress || 0);
+          setAnalysisStatus(progressData.message || 'Processing...');
+          if (progressData.details?.timeEstimate) {
+            setTimeEstimate(progressData.details.timeEstimate);
+          }
+          
+          // Stop polling when complete
+          if (progressData.progress >= 100) {
+            clearInterval(progressInterval);
+          }
+        }
+      } catch (err) {
+        console.warn('Progress polling error:', err);
+      }
+    }, 1000); // Poll every second
+
+    try {
+      // First, extract the video URL from the Facebook ad
+      const scrapeResponse = await fetch('/api/scrape-fb-ad', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ adLibraryUrl: fbAdUrl })
+      });
+
+      if (!scrapeResponse.ok) {
+        const errorData = await scrapeResponse.json();
+        throw new Error(errorData.error || 'Failed to extract video from Facebook ad');
+      }
+
+      const { videoUrl } = await scrapeResponse.json();
+      console.log('✅ Extracted video URL:', videoUrl);
+      
+      setAnalysisProgress(10); // Update progress after extraction
+      setAnalysisStatus('Video extracted! Starting analysis...');
+
+      // Now analyze the extracted video URL using the same request ID
+      const response = await fetch('/api/analyze', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          url: videoUrl,
+          userId: user.id,
+          requestId: newRequestId // Use the same request ID for consistent progress tracking
+        })
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Analysis failed');
+      }
+
+      const result = await response.json();
+      setAnalysisResults(result);
+      
+      // Refresh user profile to update credits
+      if (refreshProfile) {
+        await refreshProfile();
+      }
+      
+    } catch (err) {
+      console.error('Facebook ad analysis error:', err);
+      setError(err instanceof Error ? err.message : 'Failed to analyze Facebook ad');
+    } finally {
+      clearInterval(progressInterval);
+      setIsAnalyzing(false);
+      setRequestId(null);
+      setProgress(null);
+      setAnalysisProgress(0);
+      setAnalysisStatus('');
+      setTimeEstimate(null);
     }
   };
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
-    if (!igUrl.trim()) {
-      setError('Please enter a valid Instagram video URL');
-      return;
-    }
-    setError(null);
     
-    try {
-      // First estimate the duration and cost
-      const estimation = await estimateVideoDuration(igUrl);
-      setEstimatedDuration(estimation.duration);
-      setEstimatedCredits(estimation.estimatedCredits);
+    if (inputMethod === 'url') {
+      if (!igUrl.trim()) {
+        setError('Please enter an Instagram video URL');
+        return;
+      }
+      
+      const durationResult = await estimateVideoDuration(igUrl);
+      if (durationResult !== null) {
+        setEstimatedCost(durationResult.estimatedCredits);
+        setShowCostApproval(true);
+      }
+    } else if (inputMethod === 'upload') {
+      if (!uploadedFile) {
+        setError('Please select a video file to upload');
+        return;
+      }
+      
+      // Estimate credits based on file duration (simplified)
+      const estimatedCredits = Math.ceil(60 / 15); // Assume 60s video = 4 credits
+      setEstimatedCost(estimatedCredits);
       setShowCostApproval(true);
-    } catch (error) {
-      setError('Failed to estimate video duration. Please check the URL and try again.');
+    } else if (inputMethod === 'fbad') {
+      if (!fbAdUrl.trim()) {
+        setError('Please enter a Facebook Ad Library URL');
+        return;
+      }
+      
+      // Estimate credits for Facebook ad analysis (similar to regular video)
+      const estimatedCredits = 4; // Assume average ad duration
+      setEstimatedCost(estimatedCredits);
+      setShowCostApproval(true);
     }
   };
 
   const handleApproveAnalysis = async () => {
     setShowCostApproval(false);
-    await handleAnalyze(igUrl);
-  };
-
-  const handleDownloadPdf = async () => {
-    if (!analysisResults) return;
     
-    try {
-      setIsGeneratingPdf(true);
-      
-      const response = await fetch('/api/generate-pdf', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          analysisData: analysisResults,
-          videoUrl: igUrl
-        }),
-      });
-
-      if (!response.ok) {
-        throw new Error('Failed to generate PDF');
-      }
-
-      // Create a blob from the response
-      const blob = await response.blob();
-      
-      // Create a temporary URL for the blob
-      const url = window.URL.createObjectURL(blob);
-      
-      // Create a temporary anchor element and trigger download
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `instagram-analysis-${Date.now()}.pdf`;
-      document.body.appendChild(a);
-      a.click();
-      
-      // Clean up
-      window.URL.revokeObjectURL(url);
-      document.body.removeChild(a);
-      
-    } catch (error) {
-      console.error('Error generating PDF:', error);
-      setError('Failed to generate PDF report. Please try again.');
-    } finally {
-      setIsGeneratingPdf(false);
+    if (inputMethod === 'url') {
+      await handleAnalyze(igUrl);
+    } else if (inputMethod === 'upload' && uploadedFile) {
+      await handleAnalyze(uploadedFile);
+    } else if (inputMethod === 'fbad') {
+      await handleAnalyzeFbAd(fbAdUrl);
     }
   };
 
-  return (
-    <div className="min-h-screen relative overflow-hidden">
-      {/* Background Elements */}
-      <div className="absolute inset-0 bg-gradient-to-br from-blue-600 via-purple-600 to-indigo-800"></div>
-      <div className="absolute inset-0 bg-[url('data:image/svg+xml,%3Csvg%20width%3D%2260%22%20height%3D%2260%22%20viewBox%3D%220%200%2060%2060%22%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%3E%3Cg%20fill%3D%22none%22%20fill-rule%3D%22evenodd%22%3E%3Cg%20fill%3D%22%23ffffff%22%20fill-opacity%3D%220.05%22%3E%3Ccircle%20cx%3D%2230%22%20cy%3D%2230%22%20r%3D%222%22/%3E%3C/g%3E%3C/g%3E%3C/svg%3E')] opacity-20"></div>
-      
-      <main className="relative z-10 min-h-screen">
-        {/* Container with proper max-width */}
-        <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-          {/* Header Section */}
-          <header className="text-center mb-16">
-            <div className="max-w-4xl mx-auto">
-              <h1 className="text-display font-bold text-white mb-6 animate-float">
-                Instagram Video
-                <span className="block gradient-text bg-gradient-to-r from-yellow-300 to-pink-300 bg-clip-text text-transparent">
-                  Analyzer
-                </span>
-              </h1>
-              <p className="text-body text-blue-100 mb-8 max-w-2xl mx-auto">
-                Transform your content strategy with AI-powered video analysis. 
-                Get detailed insights, scene breakdowns, and strategic recommendations.
-              </p>
-              
-              {/* Auth Section - Centered */}
-              <div className="flex justify-center">
-                {loading ? (
-                  <div className="loading-skeleton h-12 w-32 rounded-xl"></div>
-                ) : user ? (
-                  <div className="glass-card rounded-2xl p-4 flex items-center gap-4">
-                    <div className="text-right">
-                      <div className="text-sm font-semibold text-white">
-                        {profile?.full_name || user.email}
-                      </div>
-                      <div className="text-xs text-blue-200 flex items-center gap-1">
-                        <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
-                          <path d="M8.433 7.418c.155-.103.346-.196.567-.267v1.698a2.305 2.305 0 01-.567-.267C8.07 8.34 8 8.114 8 8c0-.114.07-.34.433-.582zM11 12.849v-1.698c.22.071.412.164.567.267.364.243.433.468.433.582 0 .114-.07.34-.433.582a2.305 2.305 0 01-.567.267z"/>
-                          <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-13a1 1 0 10-2 0v.092a4.535 4.535 0 00-1.676.662C6.602 6.234 6 7.009 6 8c0 .99.602 1.765 1.324 2.246.48.32 1.054.545 1.676.662v1.941c-.391-.127-.68-.317-.843-.504a1 1 0 10-1.51 1.31c.562.649 1.413 1.076 2.353 1.253V15a1 1 0 102 0v-.092a4.535 4.535 0 001.676-.662C13.398 13.766 14 12.991 14 12c0-.99-.602-1.765-1.324-2.246A4.535 4.535 0 0011 9.092V7.151c.391.127.68.317.843.504a1 1 0 101.511-1.31c-.563-.649-1.413-1.076-2.354-1.253V5z" clipRule="evenodd"/>
-                        </svg>
-                        {profile?.credits || 0} credits
-                      </div>
-                    </div>
-                    <button
-                      onClick={() => setShowUserDashboard(true)}
-                      className="btn-secondary text-sm"
-                    >
-                      Dashboard
-                    </button>
-                  </div>
-                ) : (
-                  <button
-                    onClick={() => setShowAuthModal(true)}
-                    className="btn-primary"
-                  >
-                    <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 16l-4-4m0 0l4-4m-4 4h14m-5 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h7a3 3 0 013 3v1" />
-                    </svg>
-                    Sign In
-                  </button>
-                )}
-              </div>
-            </div>
-          </header>
+  const generateRichText = (results: VideoAnalysis): string => {
+    const lines: string[] = [];
+    
+    // Helper function to format sections
+    const addSection = (title: string, content: string | undefined | null, indent = 0) => {
+      if (!content || content.trim() === '') return;
+      const indentStr = '  '.repeat(indent);
+      lines.push(`${indentStr}${title}: ${content}`);
+    };
 
-          {/* Main Content Grid */}
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 max-w-5xl mx-auto">
-            {/* Main Form Card - Takes 2 columns on large screens */}
-            <div className="lg:col-span-2">
-              <div className="card">
-                <div className="card-header">
-                  <h2 className="text-title text-gray-900 mb-2">
-                    Analyze Your Video
-                  </h2>
-                  <p className="text-caption">
-                    Paste any public Instagram video URL to get started
-                  </p>
+    const addSectionHeader = (title: string, emoji = '📊') => {
+      lines.push('');
+      lines.push(`${emoji} ${title.toUpperCase()}`);
+      lines.push('─'.repeat(50));
+    };
+
+    // Video metadata
+    const getVideoSource = () => {
+      if (uploadedFile) return 'File Upload';
+      return 'Instagram';
+    };
+
+    const getVideoUrl = () => {
+      if (igUrl) return igUrl;
+      if (uploadedFile) return uploadedFile.name;
+      return 'Unknown';
+    };
+
+    // Header
+    lines.push('🎬 VIDEO ANALYSIS REPORT');
+    lines.push('═'.repeat(50));
+    lines.push('');
+    addSection('Video Source', getVideoSource());
+    addSection('Video URL/File', getVideoUrl());
+    addSection('Analysis Date', new Date().toISOString().split('T')[0]);
+    addSection('Total Duration', results.totalDuration);
+
+    // Overview
+    addSectionHeader('VIDEO OVERVIEW', '🎯');
+    addSection('Primary Hook', results.hook);
+    addSection('Content Structure', results.contentStructure);
+    addSection('Video Category', results.videoCategory.category.replace(/_/g, ' '));
+    addSection('Category Confidence', `${(results.videoCategory.confidence * 100).toFixed(1)}%`);
+    addSection('Category Reasoning', results.videoCategory.reasoning);
+
+         // Strategic Overview
+     if (results.strategicOverview) {
+       addSectionHeader('STRATEGIC ANALYSIS', '🎯');
+       
+       if (typeof results.strategicOverview === 'string') {
+         addSection('Why It Works', results.strategicOverview);
+       } else {
+         const strategic = results.strategicOverview as StrategicOverview;
+         addSection('Why It Works', strategic.whyItWorks);
+         if (strategic.successFormula) addSection('Success Formula', strategic.successFormula);
+         if (strategic.universalPrinciples) addSection('Universal Principles', strategic.universalPrinciples);
+         if (strategic.viralPotential) addSection('Viral Potential', strategic.viralPotential);
+         if (strategic.technicalRequirements) addSection('Technical Requirements', strategic.technicalRequirements);
+         
+         if (strategic.narrativeArc) {
+           lines.push('');
+           lines.push('  📖 Narrative Arc:');
+           addSection('Arc Type', strategic.narrativeArc.arcType, 1);
+           addSection('Structure', strategic.narrativeArc.structure, 1);
+           addSection('Key Beats', strategic.narrativeArc.keyBeats, 1);
+         }
+       }
+     }
+
+    // Scenes Analysis
+    if (results.scenes && results.scenes.length > 0) {
+      addSectionHeader('SCENE BREAKDOWN', '🎬');
+      addSection('Total Scenes', results.scenes.length.toString());
+      lines.push('');
+      
+      results.scenes.forEach((scene, index) => {
+        lines.push(`  Scene ${scene.sceneNumber} (${scene.timeRange}): ${scene.title}`);
+        addSection('Duration', scene.duration, 1);
+        addSection('Description', scene.description, 1);
+        
+        if (scene.framing?.shotTypes?.length) {
+          addSection('Shot Types', scene.framing.shotTypes.join(', '), 1);
+        }
+        if (scene.lighting?.style) {
+          addSection('Lighting', scene.lighting.style, 1);
+        }
+        if (scene.mood?.emotional) {
+          addSection('Mood', scene.mood.emotional, 1);
+        }
+        if (scene.settingEnvironment?.location) {
+          addSection('Location', scene.settingEnvironment.location, 1);
+        }
+        if (scene.subjectsFocus?.main) {
+          addSection('Main Subject', scene.subjectsFocus.main, 1);
+        }
+        
+        if (scene.intentImpactAnalysis) {
+          lines.push('    📊 Intent & Impact:');
+          addSection('Creator Intent', scene.intentImpactAnalysis.creatorIntent, 2);
+          addSection('How Executed', scene.intentImpactAnalysis.howExecuted, 2);
+          addSection('Viewer Impact', scene.intentImpactAnalysis.viewerImpact, 2);
+        }
+        
+        if (index < results.scenes.length - 1) lines.push('');
+      });
+    }
+
+    // Hooks Analysis
+    if (results.hooks && results.hooks.length > 0) {
+      addSectionHeader('HOOKS ANALYSIS', '🎣');
+      addSection('Total Hooks', results.hooks.length.toString());
+      const highImpactHooks = results.hooks.filter(h => h.impact === 'high').length;
+      addSection('High Impact Hooks', highImpactHooks.toString());
+      lines.push('');
+      
+      results.hooks.forEach((hook, index) => {
+        const impactEmoji = hook.impact === 'high' ? '🔥' : hook.impact === 'medium' ? '⚡' : '💡';
+        lines.push(`  ${impactEmoji} ${hook.timestamp} - ${hook.type.replace(/_/g, ' ').toUpperCase()}`);
+        addSection('Description', hook.description, 1);
+        addSection('Element', hook.element, 1);
+        if (hook.psychologicalTrigger) {
+          addSection('Psychological Trigger', hook.psychologicalTrigger, 1);
+        }
+        if (index < results.hooks.length - 1) lines.push('');
+      });
+    }
+
+    // Contextual Analysis
+    if (results.contextualAnalysis) {
+      addSectionHeader('CONTEXTUAL ANALYSIS', '🧠');
+      const ctx = results.contextualAnalysis;
+      
+      addSection('Target Audience', ctx.targetAudience);
+      addSection('Context Type', ctx.contextType);
+      
+      if (ctx.creatorIntent) {
+        lines.push('');
+        lines.push('  🎯 Creator Intent:');
+        addSection('Primary Intent', ctx.creatorIntent.primaryIntent, 1);
+        addSection('How Achieved', ctx.creatorIntent.howAchieved, 1);
+        if (ctx.creatorIntent.effectivenessFactors?.length) {
+          addSection('Effectiveness Factors', ctx.creatorIntent.effectivenessFactors.join(', '), 1);
+        }
+      }
+      
+      if (ctx.narrativeStructure) {
+        lines.push('');
+        lines.push('  📖 Narrative Structure:');
+        addSection('Setup', ctx.narrativeStructure.setup, 1);
+        addSection('Conflict', ctx.narrativeStructure.conflict, 1);
+        addSection('Resolution', ctx.narrativeStructure.resolution, 1);
+        if (ctx.narrativeStructure.storytellingDevices?.length) {
+          addSection('Storytelling Devices', ctx.narrativeStructure.storytellingDevices.join(', '), 1);
+        }
+      }
+      
+      if (ctx.messageDelivery) {
+        lines.push('');
+        lines.push('  💬 Message Delivery:');
+        addSection('Core Message', ctx.messageDelivery.coreMessage, 1);
+        addSection('Delivery Method', ctx.messageDelivery.deliveryMethod, 1);
+        if (ctx.messageDelivery.memorabilityFactors?.length) {
+          addSection('Memorability Factors', ctx.messageDelivery.memorabilityFactors.join(', '), 1);
+        }
+      }
+      
+      if (ctx.keyInsights?.length) {
+        lines.push('');
+        lines.push('  💡 Key Insights:');
+        ctx.keyInsights.forEach(insight => {
+          lines.push(`    • ${insight}`);
+        });
+      }
+    }
+
+    // Transcript
+    if (results.transcript?.text) {
+      addSectionHeader('TRANSCRIPT', '📝');
+      // Split long transcript into paragraphs for readability
+      const transcript = results.transcript.text;
+      const maxLineLength = 80;
+      const words = transcript.split(' ');
+      let currentLine = '';
+      
+      words.forEach(word => {
+        if ((currentLine + word).length > maxLineLength) {
+          if (currentLine) lines.push(currentLine.trim());
+          currentLine = word + ' ';
+        } else {
+          currentLine += word + ' ';
+        }
+      });
+      if (currentLine) lines.push(currentLine.trim());
+    }
+
+    // Metadata
+    if (results.videoMetadata) {
+      addSectionHeader('TECHNICAL METADATA', '⚙️');
+      addSection('Total Frames', results.videoMetadata.totalFrames?.toString());
+      addSection('Frame Rate', results.videoMetadata.frameRate?.toString());
+      addSection('Analysis Timestamp', results.videoMetadata.analysisTimestamp);
+      if (results.analysisMethod) {
+        addSection('Analysis Method', results.analysisMethod);
+      }
+    }
+
+    lines.push('');
+    lines.push('═'.repeat(50));
+    lines.push('Generated by Instagram Video Analyzer');
+    lines.push(`Report created: ${new Date().toLocaleString()}`);
+
+    return lines.join('\n');
+  };
+
+  const handleCopyRichText = async () => {
+    if (!analysisResults) return;
+    try {
+      setIsCopying(true);
+      const richText = generateRichText(analysisResults);
+      await navigator.clipboard.writeText(richText);
+      alert('Analysis copied as rich text to clipboard! You can paste it into any text editor, document, or messaging app.');
+    } catch (err) {
+      console.error('Failed to copy:', err);
+      setError('Failed to copy analysis to clipboard.');
+    } finally {
+      setIsCopying(false);
+    }
+  };
+
+  const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    // Validate file type
+    const validTypes = ['video/mp4', 'video/webm', 'video/mov', 'video/avi', 'video/quicktime'];
+    if (!validTypes.includes(file.type)) {
+      setError('Please upload a valid video file (MP4, WebM, MOV, AVI)');
+      return;
+    }
+
+    // Validate file size (max 100MB)
+    const maxSize = 100 * 1024 * 1024; // 100MB
+    if (file.size > maxSize) {
+      setError('File size must be less than 100MB');
+      return;
+    }
+
+    setUploadedFile(file);
+    setError(null);
+  };
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
+          <p className="mt-4 text-gray-600">Loading...</p>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-screen bg-gray-50">
+      <main className="py-12">
+        <div className="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8">
+          {/* Header */}
+          <div className="text-center mb-8">
+            <h1 className="text-4xl font-bold text-gray-900 mb-4">
+              🎬 Instagram Video Analyzer
+            </h1>
+            <p className="text-lg text-gray-600 max-w-2xl mx-auto mb-6">
+              Analyze Instagram videos, upload files, or extract videos from Facebook ads to get detailed analysis of content strategy, 
+              hooks, storytelling techniques, and performance insights.
+            </p>
+            
+            {/* Auth Section */}
+            <div className="flex justify-center">
+              {user ? (
+                <div className="bg-white rounded-lg shadow-sm border p-4 flex items-center gap-4">
+                  <div className="text-right">
+                    <div className="text-sm font-semibold text-gray-900">
+                      {profile?.full_name || user.email}
+                    </div>
+                    <div className="text-xs text-gray-600 flex items-center gap-1 font-medium">
+                      <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
+                        <path d="M8.433 7.418c.155-.103.346-.196.567-.267v1.698a2.305 2.305 0 01-.567-.267C8.07 8.34 8 8.114 8 8c0-.114.07-.34.433-.582zM11 12.849v-1.698c.22.071.412.164.567.267.364.243.433.468.433.582 0 .114-.07.34-.433.582a2.305 2.305 0 01-.567.267z"/>
+                        <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-13a1 1 0 10-2 0v.092a4.535 4.535 0 00-1.676.662C6.602 6.234 6 7.009 6 8c0 .99.602 1.765 1.324 2.246.48.32 1.054.545 1.676.662v1.941c-.391-.127-.68-.317-.843-.504a1 1 0 10-1.51 1.31c.562.649 1.413 1.076 2.353 1.253V15a1 1 0 102 0v-.092a4.535 4.535 0 001.676-.662C13.398 13.766 14 12.991 14 12c0-.99-.602-1.765-1.324-2.246A4.535 4.535 0 0011 9.092V7.151c.391.127.68.317.843.504a1 1 0 101.511-1.31c-.563-.649-1.413-1.076-2.354-1.253V5z" clipRule="evenodd"/>
+                      </svg>
+                      {(profile?.credits_balance ?? profile?.credits ?? 0)} credits
+                    </div>
+                  </div>
+                  <button
+                    onClick={async () => {
+                      await signOut();
+                    }}
+                    className="text-xs text-gray-500 hover:text-gray-700 underline"
+                  >
+                    Sign Out
+                  </button>
                 </div>
-                
-                <div className="card-body">
-                  <form onSubmit={handleSubmit} className="space-y-6">
-                    <div className="space-y-2">
-                      <label htmlFor="igUrl" className="block text-sm font-semibold text-gray-700">
-                        Instagram Video URL
-                      </label>
-                      <div className="relative">
-                        <input
-                          id="igUrl"
-                          type="url"
-                          value={igUrl}
-                          onChange={(e) => setIgUrl(e.target.value)}
-                          placeholder="https://www.instagram.com/p/..."
-                          className="input-field pl-12"
-                          required
-                        />
-                        <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
-                          <svg className="h-5 w-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              ) : (
+                <button
+                  onClick={() => setShowAuthModal(true)}
+                  className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-3 rounded-lg font-medium transition-colors flex items-center gap-2"
+                >
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 16l-4-4m0 0l4-4m-4 4h14m-5 4v1a3 3 0 01-3-3V7a3 3 0 013-3h7a3 3 0 013 3v1" />
+                  </svg>
+                  Sign In to Analyze Videos
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* Main Content */}
+          <div className="bg-white rounded-lg shadow-lg p-6">
+            <div className="space-y-6">
+                             {/* Tab Navigation */}
+               <div className="border-b border-gray-200">
+                 <nav className="-mb-px flex space-x-8">
+                   <button
+                     type="button"
+                     onClick={() => setInputMethod('url')}
+                     className={`py-2 px-1 border-b-2 font-medium text-sm ${
+                       inputMethod === 'url'
+                         ? 'border-blue-500 text-blue-600'
+                         : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                     }`}
+                   >
+                     📎 Instagram URL
+                   </button>
+                   <button
+                     type="button"
+                     onClick={() => setInputMethod('upload')}
+                     className={`py-2 px-1 border-b-2 font-medium text-sm ${
+                       inputMethod === 'upload'
+                         ? 'border-blue-500 text-blue-600'
+                         : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                     }`}
+                   >
+                     📁 Upload Video
+                   </button>
+                   <button
+                     type="button"
+                     onClick={() => setInputMethod('fbad')}
+                     className={`py-2 px-1 border-b-2 font-medium text-sm ${
+                       inputMethod === 'fbad'
+                         ? 'border-blue-500 text-blue-600'
+                         : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                     }`}
+                   >
+                     📊 Facebook Ad
+                   </button>
+                 </nav>
+               </div>
+
+              {/* Input Form */}
+              <div className="space-y-6">
+                <form onSubmit={handleSubmit} className="space-y-6">
+                                     <div className="bg-blue-50 rounded-lg p-4">
+                     <div className="flex items-center justify-center space-x-8 text-sm text-blue-700">
+                       <div className="flex items-center">
+                         <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                         </svg>
+                         {inputMethod === 'fbad' ? 'Facebook Ad Library URL' : 'Instagram URL or Video Upload'}
+                       </div>
+                     </div>
+
+                    {inputMethod === 'url' ? (
+                      <div className="space-y-2 mt-4">
+                        <label htmlFor="igUrl" className="block text-sm font-semibold text-gray-700">
+                          Instagram Video URL
+                        </label>
+                        <div className="relative">
+                          <input
+                            id="igUrl"
+                            type="url"
+                            value={igUrl}
+                            onChange={(e) => setIgUrl(e.target.value)}
+                            placeholder="https://www.instagram.com/reel/..."
+                            className="input-field pl-12"
+                            disabled={isAnalyzing}
+                          />
+                          <svg 
+                            className="absolute left-4 top-1/2 transform -translate-y-1/2 h-5 w-5 text-gray-400" 
+                            fill="none" 
+                            stroke="currentColor" 
+                            viewBox="0 0 24 24"
+                          >
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
                           </svg>
                         </div>
                       </div>
-                      <p className="text-caption">
-                        We support posts, reels, and IGTV videos from public accounts
-                      </p>
-                    </div>
+                    ) : inputMethod === 'upload' ? (
+                      <div className="space-y-2 mt-4">
+                        <label htmlFor="videoFile" className="block text-sm font-semibold text-gray-700">
+                          Upload Video File
+                        </label>
+                        <div className="relative">
+                          <input
+                            id="videoFile"
+                            type="file"
+                            accept="video/mp4,video/webm,video/mov,video/avi,video/quicktime"
+                            onChange={handleFileUpload}
+                            className="hidden"
+                            disabled={isAnalyzing}
+                          />
+                          <label
+                            htmlFor="videoFile"
+                            className={`flex items-center justify-center w-full h-32 border-2 border-dashed rounded-lg cursor-pointer transition-colors ${
+                              uploadedFile 
+                                ? 'border-green-300 bg-green-50' 
+                                : 'border-gray-300 bg-gray-50 hover:bg-gray-100'
+                            }`}
+                          >
+                            <div className="text-center">
+                              {uploadedFile ? (
+                                <>
+                                  <svg className="mx-auto h-12 w-12 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                  </svg>
+                                  <p className="mt-2 text-sm text-green-600">
+                                    <span className="font-medium">{uploadedFile.name}</span>
+                                  </p>
+                                  <p className="text-xs text-green-500">
+                                    {(uploadedFile.size / 1024 / 1024).toFixed(1)} MB
+                                  </p>
+                                </>
+                              ) : (
+                                <>
+                                  <svg className="mx-auto h-12 w-12 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+                                  </svg>
+                                  <p className="mt-2 text-sm text-gray-600">
+                                    <span className="font-medium">Click to upload</span> or drag and drop
+                                  </p>
+                                  <p className="text-xs text-gray-500">
+                                    MP4, WebM, MOV, AVI up to 100MB
+                                  </p>
+                                </>
+                              )}
+                            </div>
+                          </label>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="space-y-2 mt-4">
+                        <label htmlFor="fbAdUrl" className="block text-sm font-semibold text-gray-700">
+                          Facebook Ad Library URL
+                        </label>
+                        <div className="relative">
+                          <input
+                            id="fbAdUrl"
+                            type="url"
+                            value={fbAdUrl}
+                            onChange={(e) => setFbAdUrl(e.target.value)}
+                            placeholder="https://www.facebook.com/ads/library/?id=1128760052615592"
+                            className="input-field pl-12"
+                            disabled={isAnalyzing}
+                          />
+                          <svg 
+                            className="absolute left-4 top-1/2 transform -translate-y-1/2 h-5 w-5 text-gray-400" 
+                            fill="none" 
+                            stroke="currentColor" 
+                            viewBox="0 0 24 24"
+                          >
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
+                          </svg>
+                        </div>
+                        <p className="text-xs text-gray-500 mt-1">
+                          🤖 We'll automatically extract and analyze the video from the Facebook ad
+                        </p>
+                      </div>
+                    )}
+                  </div>
 
+                  {error && (
+                    <div className="bg-red-50 border border-red-200 rounded-lg p-4">
+                      <div className="flex">
+                        <svg className="w-5 h-5 text-red-400 mr-2 flex-shrink-0" viewBox="0 0 20 20" fill="currentColor">
+                          <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
+                        </svg>
+                        <p className="text-sm text-red-600">{error}</p>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Progress display during analysis */}
+                  {isAnalyzing && (
+                    <div className="bg-blue-50 rounded-lg p-6 space-y-4">
+                      <div className="flex items-center justify-center space-x-3">
+                        <svg className="animate-spin h-6 w-6 text-blue-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 818-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 714 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                        </svg>
+                        <h3 className="text-lg font-semibold text-blue-900">Analyzing Video</h3>
+                      </div>
+                      
+                      {/* Progress bar */}
+                      <div className="w-full bg-blue-200 rounded-full h-3">
+                        <div 
+                          className="bg-blue-600 h-3 rounded-full transition-all duration-500 ease-out"
+                          style={{ width: `${analysisProgress}%` }}
+                        ></div>
+                      </div>
+                      
+                      {/* Status and progress info */}
+                      <div className="text-center space-y-2">
+                        <p className="text-sm font-medium text-blue-800">
+                          {analysisStatus || 'Processing...'}
+                        </p>
+                        <p className="text-sm text-blue-600">
+                          {analysisProgress}% complete
+                        </p>
+                        
+                        {/* Time estimate */}
+                        {timeEstimate && (
+                          <div className="flex justify-center space-x-4 text-xs text-blue-600">
+                            <span>Elapsed: {timeEstimate.elapsed}s</span>
+                            {timeEstimate.remaining > 0 && (
+                              <span>Remaining: ~{timeEstimate.remaining}s</span>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                      
+                      {/* Phase details */}
+                      {progress?.phase && (
+                        <div className="text-center">
+                          <span className="inline-block bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded-full">
+                            {progress.phase.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Show analyze button only if there's content to analyze */}
+                  {!isAnalyzing && ((inputMethod === 'url' && igUrl.trim()) || 
+                    (inputMethod === 'upload' && uploadedFile) ||
+                    (inputMethod === 'fbad' && fbAdUrl.trim())) && (
                     <button
                       type="submit"
                       className="btn-primary w-full text-lg"
@@ -468,9 +1036,9 @@ export default function Home() {
                         <>
                           <svg className="animate-spin -ml-1 mr-3 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
                             <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 818-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
                           </svg>
-                          Analyzing Video...
+                          Analyzing...
                         </>
                       ) : (
                         <>
@@ -481,127 +1049,19 @@ export default function Home() {
                         </>
                       )}
                     </button>
-                  </form>
-                </div>
-              </div>
-            </div>
-
-            {/* Features Sidebar - Takes 1 column on large screens */}
-            <div className="space-y-6">
-              <div className="card">
-                <div className="card-body">
-                  <h3 className="text-title text-gray-900 mb-4">✨ What You Get</h3>
-                  <div className="space-y-4">
-                    <div className="flex items-start gap-3">
-                      <div className="w-2 h-2 bg-blue-500 rounded-full mt-2 flex-shrink-0"></div>
-                      <div>
-                        <p className="font-medium text-gray-900 text-sm">Scene Analysis</p>
-                        <p className="text-caption">Frame-by-frame breakdown with timing</p>
-                      </div>
-                    </div>
-                    <div className="flex items-start gap-3">
-                      <div className="w-2 h-2 bg-purple-500 rounded-full mt-2 flex-shrink-0"></div>
-                      <div>
-                        <p className="font-medium text-gray-900 text-sm">Hook Identification</p>
-                        <p className="text-caption">Find what grabs viewer attention</p>
-                      </div>
-                    </div>
-                    <div className="flex items-start gap-3">
-                      <div className="w-2 h-2 bg-green-500 rounded-full mt-2 flex-shrink-0"></div>
-                      <div>
-                        <p className="font-medium text-gray-900 text-sm">Strategic Insights</p>
-                        <p className="text-caption">Actionable content recommendations</p>
-                      </div>
-                    </div>
-                    <div className="flex items-start gap-3">
-                      <div className="w-2 h-2 bg-yellow-500 rounded-full mt-2 flex-shrink-0"></div>
-                      <div>
-                        <p className="font-medium text-gray-900 text-sm">PDF Report</p>
-                        <p className="text-caption">Downloadable analysis document</p>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              <div className="card">
-                <div className="card-body">
-                  <h3 className="text-title text-gray-900 mb-4">💡 Pro Tips</h3>
-                  <div className="space-y-3 text-caption">
-                    <p>• Use videos with clear audio for better transcript analysis</p>
-                    <p>• Longer videos provide more detailed insights</p>
-                    <p>• Public accounts only - private videos can't be analyzed</p>
-                    <p>• Best results with videos under 5 minutes</p>
-                  </div>
-                </div>
+                  )}
+                </form>
               </div>
             </div>
           </div>
-
-          {/* Error Display */}
-          {error && (
-            <div className="card mb-8 max-w-3xl mx-auto mt-8">
-              <div className="card-body">
-                <div className="flex items-center gap-3 text-red-600">
-                  <svg className="w-5 h-5 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
-                    <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
-                  </svg>
-                  <p className="font-medium">{error}</p>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* Progress Section */}
-          {isAnalyzing && (
-            <div className="card mb-8 max-w-3xl mx-auto mt-8">
-              <div className="card-body">
-                <div className="flex items-center gap-3 mb-4">
-                  <div className="w-8 h-8 bg-gradient-to-r from-blue-500 to-purple-600 rounded-full flex items-center justify-center animate-pulse-slow">
-                    <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
-                    </svg>
-                  </div>
-                  <div>
-                    <h3 className="text-title text-gray-900">Analyzing Your Video</h3>
-                    <p className="text-caption">This may take a few minutes depending on video length</p>
-                  </div>
-                </div>
-                
-                <div className="space-y-4">
-                  <div className="w-full bg-gray-200 rounded-full h-3 overflow-hidden">
-                    <div 
-                      className="bg-gradient-to-r from-blue-500 to-purple-600 h-3 rounded-full transition-all duration-500 ease-out relative overflow-hidden"
-                      style={{ width: `${analysisProgress}%` }}
-                    >
-                      <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/20 to-transparent animate-pulse"></div>
-                    </div>
-                  </div>
-                  
-                  <div className="flex justify-between items-center text-sm">
-                    <span className="text-gray-600">Progress: {Math.round(analysisProgress)}%</span>
-                    <span className="badge badge-primary">
-                      {estimatedCredits} credits
-                    </span>
-                  </div>
-                  
-                  <div className="bg-blue-50 rounded-xl p-4">
-                    <p className="text-sm text-blue-800">
-                      🔄 Processing video frames, extracting audio, analyzing content patterns, and generating strategic insights...
-                    </p>
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
 
           {/* Results Section */}
           {analysisResults && (
             <div className="max-w-5xl mx-auto mt-8">
               <VideoAnalysis 
                 results={analysisResults} 
-                onDownloadPdf={handleDownloadPdf}
-                isGeneratingPdf={isGeneratingPdf}
+                onCopyMarkdown={handleCopyRichText}
+                isCopying={isCopying}
               />
             </div>
           )}
@@ -611,52 +1071,39 @@ export default function Home() {
       {/* Cost Approval Modal */}
       {showCostApproval && (
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="card max-w-md w-full animate-in fade-in-0 zoom-in-95 duration-200">
-            <div className="card-header">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 bg-gradient-to-r from-yellow-400 to-orange-500 rounded-full flex items-center justify-center">
-                  <svg className="w-5 h-5 text-white" fill="currentColor" viewBox="0 0 20 20">
-                    <path d="M8.433 7.418c.155-.103.346-.196.567-.267v1.698a2.305 2.305 0 01-.567-.267C8.07 8.34 8 8.114 8 8c0-.114.07-.34.433-.582zM11 12.849v-1.698c.22.071.412.164.567.267.364.243.433.468.433.582 0 .114-.07.34-.433.582a2.305 2.305 0 01-.567.267z"/>
-                    <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-13a1 1 0 10-2 0v.092a4.535 4.535 0 00-1.676.662C6.602 6.234 6 7.009 6 8c0 .99.602 1.765 1.324 2.246.48.32 1.054.545 1.676.662v1.941c-.391-.127-.68-.317-.843-.504a1 1 0 10-1.51 1.31c.562.649 1.413 1.076 2.353 1.253V15a1 1 0 102 0v-.092a4.535 4.535 0 001.676-.662C13.398 13.766 14 12.991 14 12c0-.99-.602-1.765-1.324-2.246A4.535 4.535 0 0011 9.092V7.151c.391.127.68.317.843.504a1 1 0 101.511-1.31c-.563-.649-1.413-1.076-2.354-1.253V5z" clipRule="evenodd"/>
-                  </svg>
-                </div>
-                <h3 className="text-title text-gray-900">Analysis Cost</h3>
-              </div>
-            </div>
-            
-            <div className="card-body space-y-4">
-              <div className="bg-gradient-to-r from-blue-50 to-purple-50 rounded-xl p-4 space-y-3">
-                <div className="flex justify-between items-center">
-                  <span className="font-medium text-gray-700">Video Duration:</span>
-                  <span className="font-semibold text-gray-900">{estimatedDuration}</span>
-                </div>
-                <div className="flex justify-between items-center">
-                  <span className="font-medium text-gray-700">Required Credits:</span>
-                  <span className="badge badge-primary text-lg font-bold">{estimatedCredits} credits</span>
-                </div>
-                <div className="text-caption border-t border-gray-200 pt-2">
-                  Rate: 1 credit per 15 seconds of video
-                </div>
+          <div className="bg-white rounded-lg shadow-xl max-w-md w-full mx-4">
+            <div className="p-6">
+              <div className="flex items-center justify-center w-12 h-12 mx-auto bg-blue-100 rounded-full mb-4">
+                <svg className="w-6 h-6 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
               </div>
               
-              <div className="bg-green-50 rounded-xl p-4">
-                <p className="text-sm text-green-800">
-                  ✨ You'll receive detailed scene analysis, hook identification, strategic insights, and a downloadable PDF report.
-                </p>
-              </div>
+              <h3 className="text-lg font-semibold text-gray-900 text-center mb-2">
+                Confirm Analysis
+              </h3>
               
-              <div className="flex gap-3">
+                             <p className="text-sm text-gray-600 text-center mb-4">
+                 This analysis will cost <strong>{estimatedCost} credits</strong>. You currently have{' '}
+                 <strong>{profile?.credits_balance ?? profile?.credits ?? 0} credits</strong> available.
+               </p>
+              
+              <div className="flex space-x-3">
                 <button
                   onClick={() => setShowCostApproval(false)}
-                  className="btn-secondary flex-1"
+                  className="flex-1 px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
                 >
                   Cancel
                 </button>
-                <button
-                  onClick={handleApproveAnalysis}
-                  className="btn-primary flex-1"
-                >
-                  Approve & Analyze
+                                 <button
+                   onClick={handleApproveAnalysis}
+                   disabled={!profile || (profile.credits_balance ?? profile.credits ?? 0) < (estimatedCost || 0)}
+                   className="flex-1 px-4 py-2 text-sm font-medium text-white bg-blue-600 border border-transparent rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
+                 >
+                   {!profile || (profile.credits_balance ?? profile.credits ?? 0) < (estimatedCost || 0) 
+                     ? 'Insufficient Credits' 
+                     : 'Start Analysis'
+                   }
                 </button>
               </div>
             </div>
@@ -664,16 +1111,11 @@ export default function Home() {
         </div>
       )}
 
-      {/* Authentication Modal */}
-      <AuthModal 
-        isOpen={showAuthModal} 
-        onClose={() => setShowAuthModal(false)} 
-      />
-
-      {/* User Dashboard Modal */}
-      {showUserDashboard && (
-        <UserDashboard 
-          onClose={() => setShowUserDashboard(false)}
+      {/* Auth Modal */}
+      {showAuthModal && (
+        <AuthModal 
+          isOpen={showAuthModal} 
+          onClose={() => setShowAuthModal(false)} 
         />
       )}
     </div>

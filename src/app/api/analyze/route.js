@@ -4,6 +4,7 @@ import { promisify } from 'util';
 import fs from 'fs';
 import path from 'path';
 import OpenAI from 'openai';
+import { isSupabaseAvailable, getUserProfile, updateUserCredits, supabase } from '@/lib/supabase';
 
 const execAsync = promisify(exec);
 const openai = new OpenAI({
@@ -12,7 +13,8 @@ const openai = new OpenAI({
 
 // Rate limiting configuration
 const RATE_LIMIT_DELAY = 3000; // 3 seconds between requests
-const MAX_RETRIES = 2; // Reduced retries to avoid long waits
+const MAX_RETRIES = 3; // Increased retries for better reliability
+const SCENE_ANALYSIS_RETRIES = 2; // Additional retries for scene analysis specifically
 
 // Helper function to wait
 const wait = (ms) => new Promise(resolve => setTimeout(resolve, ms));
@@ -23,42 +25,192 @@ function logWithTimestamp(message, data = null) {
   console.log(`[${timestamp}] ${message}`, data ? JSON.stringify(data, null, 2) : '');
 }
 
-// Helper function to handle rate limits
-async function handleRateLimit(fn, retries = MAX_RETRIES) {
-  const startTime = Date.now();
+// Progress tracking state
+const progressState = new Map();
+
+// Clean up old progress entries every 10 minutes
+setInterval(() => {
+  const tenMinutesAgo = Date.now() - 10 * 60 * 1000;
+  for (const [key, value] of progressState.entries()) {
+    if (value.startTime < tenMinutesAgo) {
+      progressState.delete(key);
+    }
+  }
+}, 5 * 60 * 1000); // Clean up every 5 minutes
+
+// Helper function to update progress with time estimation
+async function updateProgress(requestId, phase, progress, message, details = {}) {
   try {
-    logWithTimestamp(`🔄 Executing OpenAI API call with ${retries} retries left`);
-    const result = await fn();
-    const duration = Date.now() - startTime;
-    logWithTimestamp(`✅ OpenAI API call successful`, { duration: `${duration}ms` });
-    return result;
-  } catch (error) {
-    const duration = Date.now() - startTime;
-    logWithTimestamp(`❌ OpenAI API call failed`, { 
-      duration: `${duration}ms`,
-      error: error.message,
-      code: error.code,
-      status: error.status,
-      headers: error.headers
+    // Initialize or update progress state
+    if (!progressState.has(requestId)) {
+      progressState.set(requestId, {
+        startTime: Date.now(),
+        phases: {},
+        totalFrames: 0,
+        estimatedDuration: 0
+      });
+    }
+    
+    const state = progressState.get(requestId);
+    state.phases[phase] = { progress, message, timestamp: Date.now() };
+    
+    // Calculate time estimates
+    const elapsed = Date.now() - state.startTime;
+    const estimatedTotal = progress > 0 ? (elapsed / progress) * 100 : 0;
+    const remaining = estimatedTotal - elapsed;
+    
+    const timeEstimate = {
+      elapsed: Math.round(elapsed / 1000),
+      remaining: Math.max(0, Math.round(remaining / 1000)),
+      total: Math.round(estimatedTotal / 1000)
+    };
+    
+    // Use localhost for development, or the actual base URL in production
+    const baseUrl = process.env.VERCEL_URL 
+      ? `https://${process.env.VERCEL_URL}` 
+      : process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000';
+      
+    const response = await fetch(`${baseUrl}/api/progress`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ 
+        requestId, 
+        phase, 
+        progress, 
+        message, 
+        details: { ...details, timeEstimate }
+      })
     });
     
-    if ((error.code === 'rate_limit_exceeded' || error.status === 429) && retries > 0) {
-      // Extract retry-after from headers if available, otherwise use default delay
-      const retryAfterMs = error.headers?.['retry-after-ms'];
-      const retryAfterSec = error.headers?.['retry-after'];
-      let waitTime = RATE_LIMIT_DELAY;
+    if (!response.ok) {
+      throw new Error(`Progress update failed: ${response.status}`);
+    }
+    
+    logWithTimestamp('📊 Progress updated', { 
+      requestId, 
+      phase, 
+      progress, 
+      message,
+      timeEstimate: `${timeEstimate.elapsed}s elapsed, ${timeEstimate.remaining}s remaining`
+    });
+  } catch (error) {
+    // Silently fail - progress tracking is not critical
+    logWithTimestamp('⚠️ Failed to update progress', { error: error.message, requestId });
+  }
+}
+
+// Helper function to detect AI refusal responses
+function isRefusalResponse(response) {
+  if (!response || typeof response !== 'string') return false;
+  
+  const refusalPatterns = [
+    /i'?m unable to/i,
+    /i can'?t/i,
+    /i don'?t have the ability/i,
+    /i'm not able to/i,
+    /i cannot/i,
+    /unable to provide/i,
+    /can'?t analyze/i,
+    /unable to analyze/i,
+    /i'm not capable/i,
+    /i don'?t have access/i,
+    /i can'?t see/i,
+    /i'm unable to see/i,
+    /i can'?t provide/i,
+    /i'm not designed to/i,
+    /i don'?t currently have/i
+  ];
+  
+  return refusalPatterns.some(pattern => pattern.test(response));
+}
+
+// Enhanced rate limit handler with refusal detection
+async function handleRateLimit(fn, retries = MAX_RETRIES, context = 'general') {
+  const startTime = Date.now();
+  
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      logWithTimestamp(`🔄 Executing OpenAI API call with ${retries - attempt} retries left`, { 
+        context, 
+        attempt: attempt + 1 
+      });
       
-      if (retryAfterMs) {
-        waitTime = parseInt(retryAfterMs) + 1000; // Add 1 second buffer
-      } else if (retryAfterSec) {
-        waitTime = parseInt(retryAfterSec) * 1000 + 1000; // Convert to ms and add buffer
+      const result = await fn();
+      const duration = Date.now() - startTime;
+      
+      // Check for refusal response
+      if (isRefusalResponse(result)) {
+        logWithTimestamp(`🚫 AI refusal detected on attempt ${attempt + 1}`, { 
+          context,
+          response: result.substring(0, 200) + '...',
+          duration: `${duration}ms`
+        });
+        
+        if (attempt < retries) {
+          const delay = Math.pow(2, attempt) * 1000; // Exponential backoff
+          logWithTimestamp(`⏳ Waiting ${delay}ms before retry due to refusal`, { 
+            context,
+            nextAttempt: attempt + 2 
+          });
+          await wait(delay);
+          continue;
+        } else {
+          logWithTimestamp(`❌ Maximum retries reached for refusal`, { context });
+          throw new Error(`AI model refused to analyze content after ${retries + 1} attempts`);
+        }
       }
       
-      logWithTimestamp(`⏳ Rate limit hit, waiting ${waitTime}ms before retry. Retries left: ${retries - 1}`);
-      await wait(waitTime);
-      return handleRateLimit(fn, retries - 1);
+      logWithTimestamp(`✅ OpenAI API call successful`, { 
+        context,
+        duration: `${duration}ms`,
+        attempt: attempt + 1
+      });
+      return result;
+      
+    } catch (error) {
+      const duration = Date.now() - startTime;
+      logWithTimestamp(`❌ OpenAI API call failed on attempt ${attempt + 1}`, { 
+        context,
+        duration: `${duration}ms`,
+        error: error.message,
+        code: error.code,
+        status: error.status
+      });
+      
+      // Check if this is a rate limit error
+      if ((error.code === 'rate_limit_exceeded' || error.status === 429) && attempt < retries) {
+        const delay = Math.pow(2, attempt) * 2000; // Exponential backoff for rate limits
+        logWithTimestamp(`⏳ Rate limit hit, waiting ${delay}ms before retry ${attempt + 2}`, { context });
+        await wait(delay);
+        continue;
+      }
+      
+      // Check if this is a temporary error that should be retried
+      if (attempt < retries && (
+        error.code === 'timeout' ||
+        error.code === 'ECONNRESET' ||
+        error.status >= 500 ||
+        error.message.includes('timeout') ||
+        error.message.includes('network')
+      )) {
+        const delay = Math.pow(2, attempt) * 1000; // Exponential backoff
+        logWithTimestamp(`⏳ Temporary error, waiting ${delay}ms before retry ${attempt + 2}`, { 
+          context,
+          error: error.message 
+        });
+        await wait(delay);
+        continue;
+      }
+      
+      // If we've exhausted all retries or it's not a retryable error
+      if (attempt === retries) {
+        logWithTimestamp(`💥 All retries exhausted for ${context}`, { 
+          totalAttempts: attempt + 1,
+          finalError: error.message 
+        });
+        throw error;
+      }
     }
-    throw error;
   }
 }
 
@@ -67,12 +219,17 @@ async function downloadVideo(url) {
   logWithTimestamp('🎥 Starting video download', { url });
   
   try {
-    // Validate URL format
+    // Validate URL format - accept Instagram URLs or direct video URLs
     const igUrlPattern = /^https?:\/\/(www\.)?instagram\.com\/(p|reel|tv)\/[\w-]+/;
-    if (!igUrlPattern.test(url)) {
-      throw new Error(`Invalid Instagram URL format: ${url}`);
+    const videoUrlPattern = /^https?:\/\/.*\.(mp4|webm|mov|avi)(\?.*)?$/i;
+    const fbVideoUrlPattern = /^https?:\/\/.*\.fbcdn\.net\/.*\.(mp4|webm)(\?.*)?$/i;
+    
+    if (!igUrlPattern.test(url) && !videoUrlPattern.test(url) && !fbVideoUrlPattern.test(url)) {
+      throw new Error(`Invalid URL format. Please provide an Instagram URL or direct video URL: ${url}`);
     }
-    logWithTimestamp('✅ URL validation passed');
+    logWithTimestamp('✅ URL validation passed', { 
+      urlType: igUrlPattern.test(url) ? 'instagram' : 'direct_video'
+    });
     
     // Create a temporary directory for downloads if it doesn't exist
     const downloadDir = path.join(process.cwd(), 'temp');
@@ -170,9 +327,9 @@ async function downloadVideo(url) {
   }
 }
 
-async function extractFrames(videoPath) {
+async function extractFrames(videoPath, analysisMode = 'standard') {
   const startTime = Date.now();
-  logWithTimestamp('🖼️ Starting frame extraction', { videoPath });
+  logWithTimestamp('🖼️ Starting frame extraction', { videoPath, analysisMode });
 
   try {
     // Validate video file exists
@@ -213,17 +370,28 @@ async function extractFrames(videoPath) {
       queryTime: `${durationQueryTime}ms`
     });
 
-    // Extract two frames every second to catch fast movements
+    // Define frame rates based on analysis mode
+    const frameRates = {
+      'fine': 4,     // 4fps - captures quick cuts and transitions
+      'standard': 2, // 2fps - balanced analysis  
+      'broad': 1     // 1fps - overview analysis
+    };
+    
+    const fps = frameRates[analysisMode] || frameRates['standard'];
+
+    // Extract frames at specified fps
   const outputPattern = path.join(framesDir, 'frame-%d.jpg');
     logWithTimestamp('🎞️ Extracting frames', { 
       outputPattern,
-      expectedFrames: Math.floor(duration * 2), // 2fps = 2 frames per second
-      frameRate: '2fps (improved for fast movements)'
+      analysisMode,
+      fps: `${fps}fps`,
+      expectedFrames: Math.floor(duration * fps),
+      frameRate: `${fps}fps (${analysisMode} analysis mode)`
     });
     
     const extractStartTime = Date.now();
     const { stdout: extractStdout, stderr: extractStderr } = await execAsync(
-      `ffmpeg -i "${videoPath}" -vf fps=2 "${outputPattern}" -y`
+      `ffmpeg -i "${videoPath}" -vf fps=${fps} "${outputPattern}" -y`
     );
     const extractDuration = Date.now() - extractStartTime;
     
@@ -260,10 +428,12 @@ async function extractFrames(videoPath) {
     logWithTimestamp('✅ Frame extraction successful', { 
       totalFrames: frames.length,
       totalDuration: `${totalDuration}ms`,
-      avgFrameSize: `${(frameStats.reduce((sum, f) => sum + f.size, 0) / frameStats.length / 1024).toFixed(2)} KB`
+      avgFrameSize: `${(frameStats.reduce((sum, f) => sum + f.size, 0) / frameStats.length / 1024).toFixed(2)} KB`,
+      analysisMode,
+      fps
     });
 
-  return frames;
+  return { frames, fps, analysisMode };
   } catch (error) {
     const duration = Date.now() - startTime;
     logWithTimestamp('❌ Frame extraction failed', { 
@@ -319,7 +489,7 @@ async function extractAudio(videoPath) {
   }
 }
 
-async function analyzeFramesInBatches(frames) {
+async function analyzeFramesInBatches(frames, requestId = 'unknown') {
   const startTime = Date.now();
   logWithTimestamp('🎯 Starting smart frame batching', { totalFrames: frames.length });
 
@@ -331,8 +501,8 @@ async function analyzeFramesInBatches(frames) {
       strategy: 'Every 0.5 seconds at 2fps (enhanced coverage for fast movements)'
     });
 
-    // Process in batches of 4 frames per API call for efficiency
-    const batchSize = 4;
+    // Process in batches of 6 frames per API call for better analysis quality
+    const batchSize = 3; // Reduced to minimize AI refusals while maintaining efficiency
     const batches = [];
     for (let i = 0; i < allFrames.length; i += batchSize) {
       batches.push(allFrames.slice(i, i + batchSize));
@@ -348,6 +518,16 @@ async function analyzeFramesInBatches(frames) {
     
     for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
       const batch = batches[batchIndex];
+      
+          // Update progress for each batch (10% to 70% range)
+    const batchProgress = 10 + Math.round((batchIndex / batches.length) * 60);
+    await updateProgress(requestId, 'frame_analysis', batchProgress, `Analyzing batch ${batchIndex + 1}/${batches.length} (${batch.length} frames)`, {
+      batchIndex: batchIndex + 1,
+      totalBatches: batches.length,
+      framesInBatch: batch.length,
+      totalFrames: frames.length
+    });
+      
       logWithTimestamp(`🔄 Processing batch ${batchIndex + 1}/${batches.length}`, {
         frameCount: batch.length,
         frameIndices: batch.map(f => f.index)
@@ -357,10 +537,7 @@ async function analyzeFramesInBatches(frames) {
         const batchAnalyses = await analyzeBatch(batch, batchIndex);
         allAnalyses.push(...batchAnalyses);
         
-        // Add delay between batches
-        if (batchIndex < batches.length - 1) {
-          await wait(3000); // 3 second delay between batches
-        }
+        // No delay between batches for maximum speed
       } catch (error) {
         logWithTimestamp(`⚠️ Batch ${batchIndex + 1} failed, creating placeholders`, {
           error: error.message,
@@ -383,7 +560,7 @@ async function analyzeFramesInBatches(frames) {
       totalDuration: `${duration}ms`,
       processedFrames: allAnalyses.length,
       finalFrameCount: allAnalyses.length,
-      coverage: '100% frames analyzed (every 1 second)'
+      coverage: '100% frames analyzed (optimized 3-frame batches to reduce AI refusals)'
     });
 
     return allAnalyses;
@@ -444,42 +621,28 @@ async function analyzeBatch(batch, batchIndex) {
       const content = [
         {
           type: "text",
-          text: `Analyze these ${batch.length} video frames with deep contextual understanding. Pay special attention to ON-SCREEN TEXT as it often provides the most important context clues.
+          text: `Analyze these ${batch.length} video frames to understand the visual storytelling and content structure. Focus on what makes this content engaging and effective.
 
-CRITICAL ANALYSIS PRIORITIES:
-1. ON-SCREEN TEXT: Read and analyze ALL visible text, captions, overlays, graphics, UI elements
-2. CONTEXTUAL MEANING: What story/message is being communicated?
-3. VISUAL STORYTELLING: How do visual choices support the narrative?
-4. EMOTIONAL IMPACT: What reactions are designed to be evoked?
-5. TECHNICAL PURPOSE: Why specific techniques are used and their effect
+ANALYSIS FOCUS:
+1. VISUAL DESCRIPTION: Describe what you see in each frame - people, objects, settings, and actions
+2. STORYTELLING ELEMENTS: Identify setup, development, and payoff moments
+3. ENGAGEMENT TACTICS: Note visual hooks, transitions, and audience engagement techniques
+4. TEXT CONTENT: Read and transcribe any visible text, captions, or overlays
+5. NARRATIVE FLOW: How does each frame contribute to the overall story or message?
 
-TEXT ANALYSIS FOCUS:
-- Read ALL visible text accurately (captions, overlays, UI text, signs, graphics)
-- Analyze HOW text timing relates to visuals (setup/payoff, irony, contrast)
-- Identify if text contradicts or supports what's shown visually
-- Determine the narrative function of text (exposition, humor, emphasis)
-
-TECHNIQUE IMPACT ANALYSIS:
-- Speed ramps: WHY used? (emphasis, drama, comedy timing)
-- Color shifts: WHY used? (mood change, irony, contrast)
-- Text overlays: WHY positioned here? What's the intended impact?
-- Facial expressions: What emotion/reaction are they designed to create?
-- Composition: How does framing support the message?
-
-Provide analysis for each frame in this exact format:
+For each frame, provide analysis in this format:
 
 ${batch.map((frame, i) => `FRAME_${frame.index}:
-FRAMING: [shot type] - WHY: [reason for this choice and its impact]
-LIGHTING: [style/mood] - IMPACT: [how this affects viewer emotion]
-MOOD: [emotional tone] - PURPOSE: [why this emotion is needed here]
-ACTION: [what's happening] - SIGNIFICANCE: [why this moment matters]
-ON_SCREEN_TEXT: [ALL visible text/captions/graphics] - CONTEXT: [what this text reveals about the story/message/irony]
-VISUAL_EFFECTS: [effects used] - INTENT: [why this effect was chosen and its purpose]
-SETTING: [location/environment] - ROLE: [how setting supports the story]
-SUBJECTS: [main focus] - NARRATIVE_FUNCTION: [their role in the story/message]
-CONTEXTUAL_MEANING: [what this frame communicates to the audience and why it works]`).join('\n\n')}
+VISUAL_DESCRIPTION: [Describe what you see - people, objects, setting, actions]
+OBJECTS_ITEMS: [List visible objects, props, or items and their relevance]
+BODY_LANGUAGE: [Describe facial expressions, gestures, and posture]
+TEXT_OVERLAYS: [Any visible text, captions, or graphic overlays]
+ENGAGEMENT_ELEMENTS: [Visual hooks, reactions, or elements designed to capture attention]
+STORY_FUNCTION: [How this frame contributes to setup, development, or payoff]
+TRANSITIONS: [Any visual transitions or effects between scenes]
+CONTEXTUAL_MEANING: [What story or message is being communicated]`).join('\n\n')}
 
-CRITICAL: Always read and transcribe any visible text accurately. Text on screen is often the key to understanding the video's context and message.`
+Please provide clear, professional analysis focusing on the content creation and storytelling techniques used in these frames.`
         }
       ];
 
@@ -496,11 +659,11 @@ CRITICAL: Always read and transcribe any visible text accurately. Text on screen
       const response = await openai.chat.completions.create({
         model: "gpt-4o-mini",
         messages: [{ role: "user", content }],
-        max_tokens: 2000 // Increased for better quality analysis
+        max_tokens: 12000 // Increased from 3000 - using more of our 16,384 token limit
       });
 
       return response.choices[0].message.content;
-    });
+    }, MAX_RETRIES, `batch_${batchIndex + 1}_frames_${batch.map(f => f.index).join('-')}`);
 
     // Parse the batch response into individual frame analyses
     const analyses = parseBatchResponse(result, batch);
@@ -525,35 +688,147 @@ function parseBatchResponse(response, batch) {
   const analyses = [];
   
   try {
-    // Split response by frame markers
-    const frameBlocks = response.split(/FRAME_\d+:/);
+    logWithTimestamp('🔍 Parsing batch response', { 
+      responseLength: response.length,
+      batchSize: batch.length,
+      responsePreview: response.substring(0, 200) + '...'
+    });
     
-    // Skip the first empty element and process each frame block
-    for (let i = 1; i < frameBlocks.length && i <= batch.length; i++) {
-      const frameIndex = batch[i - 1].index;
-      const analysis = frameBlocks[i].trim();
+    // Check if the entire response is a refusal
+    if (isRefusalResponse(response)) {
+      logWithTimestamp('🚫 Entire batch response is a refusal', { 
+        response: response.substring(0, 300) + '...' 
+      });
+      
+      // Create fallback analyses for all frames
+      batch.forEach(frame => {
+        analyses.push({
+          frameIndex: frame.index,
+          timestamp: `${(frame.index * 0.5).toFixed(1)}s`,
+          analysis: `AI model unable to analyze frame ${frame.index}: Content analysis was declined`,
+          contextualMeaning: 'Analysis declined by AI model',
+          isRefusal: true
+        });
+      });
+      
+      return analyses;
+    }
+    
+    // Enhanced parsing: Try multiple strategies
+    let frameBlocks = [];
+    
+    // Strategy 1: Look for FRAME_X: markers (preferred)
+    if (response.includes('FRAME_')) {
+      frameBlocks = response.split(/FRAME_\d+:/);
+      logWithTimestamp('📋 Using FRAME_X: parsing strategy', { blockCount: frameBlocks.length - 1 });
+    }
+    // Strategy 2: Look for numbered patterns like "1.", "2.", etc.
+    else if (/^\d+\./.test(response.trim())) {
+      frameBlocks = ['', ...response.split(/\n(?=\d+\.)/)]
+      logWithTimestamp('📋 Using numbered list parsing strategy', { blockCount: frameBlocks.length - 1 });
+    }
+    // Strategy 3: Split by double newlines (paragraph breaks)
+    else if (response.includes('\n\n')) {
+      const paragraphs = response.split('\n\n').filter(p => p.trim().length > 10);
+      frameBlocks = ['', ...paragraphs];
+      logWithTimestamp('📋 Using paragraph parsing strategy', { blockCount: frameBlocks.length - 1 });
+    }
+    // Strategy 4: Treat entire response as single analysis for first frame
+    else {
+      frameBlocks = ['', response];
+      logWithTimestamp('📋 Using single response parsing strategy');
+    }
+    
+    // Process each frame block
+    for (let i = 1; i < frameBlocks.length && analyses.length < batch.length; i++) {
+      const frameIndex = batch[analyses.length].index;
+      let analysis = frameBlocks[i].trim();
+      
+      // Clean up analysis text
+      analysis = analysis.replace(/^FRAME_\d+:\s*/, ''); // Remove frame marker if present
+      analysis = analysis.replace(/^\d+\.\s*/, ''); // Remove number prefix if present
+      
+      // Check if this individual frame analysis is a refusal
+      if (isRefusalResponse(analysis)) {
+        logWithTimestamp(`🚫 Frame ${frameIndex} analysis is a refusal`, { 
+          frameIndex,
+          refusal: analysis.substring(0, 150) + '...' 
+        });
+        
+        analyses.push({
+          frameIndex,
+          timestamp: `${(frameIndex * 0.5).toFixed(1)}s`,
+          analysis: `AI model unable to analyze frame ${frameIndex}: ${analysis.substring(0, 200)}...`,
+          contextualMeaning: 'Analysis declined by AI model',
+          isRefusal: true
+        });
+        continue;
+      }
+      
+      // Ensure we have meaningful content
+      if (analysis.length < 10) {
+        analysis = `Frame ${frameIndex}: Brief visual analysis - ${analysis}`;
+      }
       
       // Parse the structured analysis to extract contextual meaning
       const contextualMeaning = extractContextualMeaning(analysis);
       
       analyses.push({
         frameIndex,
-        timestamp: `${(frameIndex * 0.5).toFixed(1)}s`, // Updated for 2fps
+        timestamp: `${(frameIndex * 0.5).toFixed(1)}s`,
         analysis,
-        contextualMeaning
+        contextualMeaning,
+        isRefusal: false
+      });
+      
+      logWithTimestamp(`✅ Parsed frame ${frameIndex}`, { 
+        analysisLength: analysis.length,
+        hasContextualMeaning: !!contextualMeaning
       });
     }
     
-    // If parsing failed or we don't have enough analyses, create fallbacks
+    // If we still don't have enough analyses, distribute the content evenly
+    if (analyses.length < batch.length && response.length > 50) {
+      logWithTimestamp('🔄 Distributing remaining content across missing frames');
+      
+      const remainingFrames = batch.slice(analyses.length);
+      const baseAnalysis = response.length > 200 ? 
+        response.substring(0, Math.min(500, response.length)) : 
+        response;
+      
+      remainingFrames.forEach(frame => {
+        analyses.push({
+          frameIndex: frame.index,
+          timestamp: `${(frame.index * 0.5).toFixed(1)}s`,
+          analysis: `${baseAnalysis} (distributed analysis for frame ${frame.index})`,
+          contextualMeaning: 'Context analysis distributed from batch response',
+          isRefusal: false
+        });
+      });
+    }
+    
+    // Final fallback for any remaining missing frames
     while (analyses.length < batch.length) {
       const missingIndex = batch[analyses.length].index;
       analyses.push({
         frameIndex: missingIndex,
         timestamp: `${(missingIndex * 0.5).toFixed(1)}s`,
-        analysis: `Analysis parsing incomplete for frame ${missingIndex}`,
-        contextualMeaning: 'Context analysis unavailable'
+        analysis: `Analysis parsing incomplete for frame ${missingIndex} - AI response format unexpected`,
+        contextualMeaning: 'Context analysis unavailable',
+        isRefusal: false
       });
     }
+    
+    // Count successful vs failed analyses
+    const successfulAnalyses = analyses.filter(a => !a.analysis.includes('parsing incomplete') && !a.isRefusal);
+    const refusedAnalyses = analyses.filter(a => a.isRefusal);
+    
+    logWithTimestamp('✅ Batch parsing complete', { 
+      successfullyParsed: successfulAnalyses.length,
+      refusedAnalyses: refusedAnalyses.length,
+      totalFrames: batch.length,
+      successRate: `${Math.round((successfulAnalyses.length / batch.length) * 100)}%`
+    });
     
   } catch (error) {
     logWithTimestamp('⚠️ Failed to parse batch response, creating fallbacks', { error: error.message });
@@ -564,7 +839,8 @@ function parseBatchResponse(response, batch) {
         frameIndex: frame.index,
         timestamp: `${(frame.index * 0.5).toFixed(1)}s`,
         analysis: `Failed to parse batch response: ${error.message}`,
-        contextualMeaning: 'Context analysis failed'
+        contextualMeaning: 'Context analysis failed',
+        isRefusal: false
       });
     });
   }
@@ -767,8 +1043,8 @@ async function analyzeAudio(audioPath) {
       segmentCount: transcription.segments?.length || 0
     });
 
-  // Then, analyze and separate dialogue from music/lyrics
-    logWithTimestamp('🎼 Starting audio separation and analysis');
+  // Enhanced audio separation with better music detection
+    logWithTimestamp('🎼 Starting enhanced audio separation and analysis');
     const analysisStartTime = Date.now();
     
   const separationAnalysis = await handleRateLimit(async () => {
@@ -777,37 +1053,65 @@ async function analyzeAudio(audioPath) {
       messages: [
         {
           role: "user",
-          content: `Analyze this audio transcript and separate DIALOGUE from MUSIC LYRICS. Dialogue provides the highest context for understanding the video.
+          content: `CRITICAL: Analyze this audio transcript and distinguish between SPOKEN DIALOGUE and SUNG MUSIC LYRICS.
 
 FULL TRANSCRIPT: "${transcription.text}"
 
 TIMESTAMPED SEGMENTS:
 ${transcription.segments?.map(seg => `${seg.start.toFixed(1)}s-${seg.end.toFixed(1)}s: "${seg.text}"`).join('\n') || 'No segments available'}
 
+MUSIC DETECTION CLUES:
+- Repetitive phrases or choruses
+- Rhyming patterns
+- Melodic/rhythmic delivery
+- Song titles or famous lyrics
+- Musical instruments in background
+- Singing voice vs speaking voice
+
+DIALOGUE DETECTION CLUES:
+- Conversational tone
+- Natural speech patterns
+- Narration or voice-over
+- Direct communication
+- Explanatory content
+
 Provide analysis in this JSON format:
 {
+  "audioType": "dialogue|music|mixed",
+  "confidence": 0.95,
   "dialogue": {
-    "content": "[all spoken dialogue/narration/speech - prioritize this]",
-    "segments": [{"start": 0, "end": 5, "text": "dialogue text", "contextualMeaning": "what this reveals about the video"}],
-    "primaryContext": "[main message/story revealed through dialogue]"
+    "content": "[ONLY spoken words/narration - exclude sung lyrics]",
+    "segments": [{"start": 0, "end": 5, "text": "dialogue text", "type": "narration|conversation|voiceover"}],
+    "primaryContext": "[main message from spoken content]",
+    "isEmpty": false
   },
   "musicLyrics": {
-    "content": "[any sung lyrics or background vocals]",
+    "content": "[ONLY sung lyrics - exclude spoken words]",
+    "songTitle": "[if recognizable song]",
     "mood": "[musical genre/mood]",
-    "role": "[how music supports the narrative]"
+    "role": "[background|foreground|thematic]",
+    "isEmpty": false
   },
   "soundDesign": {
-    "effects": "[sound effects, ambient sounds, UI sounds]",
-    "purpose": "[how sound design enhances the experience]"
+    "effects": "[sound effects, ambient sounds]",
+    "musicInstruments": "[detected instruments]",
+    "audioQuality": "[clear|muffled|background]"
   },
-  "contextPriority": "[dialogue/music/effects - which provides most story context]",
-  "audioSummary": "[brief summary of what the audio tells us about the video's message]"
+  "contextPriority": "dialogue|music|mixed",
+  "reasoning": "[explain why you classified it this way]",
+  "audioSummary": "[what the audio tells us about the video's purpose]"
 }
 
-CRITICAL: Distinguish between spoken words (dialogue) and sung words (music). If someone is clearly speaking/narrating, that's dialogue. If it's melodic/rhythmic, that's music lyrics.`
+EXAMPLES:
+- "The raindrops are falling on my head" = MUSIC LYRICS (famous song)
+- "Let me show you how to do this" = DIALOGUE (instructional)
+- "I was walking down the street when..." = DIALOGUE (narration)
+- "We are the champions, my friends" = MUSIC LYRICS (Queen song)
+
+Be very precise - if it sounds like singing or is from a known song, classify as music lyrics.`
         }
       ],
-      max_tokens: 1200
+      max_tokens: 1500
     });
     return response.choices[0].message.content;
   });
@@ -816,43 +1120,57 @@ CRITICAL: Distinguish between spoken words (dialogue) and sung words (music). If
   let separatedAudio = null;
   try {
     separatedAudio = JSON.parse(separationAnalysis);
-    logWithTimestamp('✅ Audio separation successful', {
-      hasDialogue: !!separatedAudio.dialogue?.content,
-      hasMusicLyrics: !!separatedAudio.musicLyrics?.content,
-      contextPriority: separatedAudio.contextPriority
+    logWithTimestamp('✅ Enhanced audio separation successful', {
+      audioType: separatedAudio.audioType,
+      confidence: separatedAudio.confidence,
+      hasDialogue: !separatedAudio.dialogue?.isEmpty,
+      hasMusicLyrics: !separatedAudio.musicLyrics?.isEmpty,
+      contextPriority: separatedAudio.contextPriority,
+      reasoning: separatedAudio.reasoning
     });
   } catch (parseError) {
     logWithTimestamp('⚠️ Failed to parse audio separation, using fallback');
     separatedAudio = {
+      audioType: 'mixed',
+      confidence: 0.5,
       dialogue: { 
         content: transcription.text, 
-        primaryContext: 'Audio separation failed - full transcript available' 
+        primaryContext: 'Audio separation failed - full transcript available',
+        isEmpty: false
       },
-      musicLyrics: { content: '', mood: 'Unknown' },
-      soundDesign: { effects: 'Unknown', purpose: 'Unknown' },
+      musicLyrics: { content: '', mood: 'Unknown', isEmpty: true },
+      soundDesign: { effects: 'Unknown', audioQuality: 'Unknown' },
       contextPriority: 'dialogue',
+      reasoning: 'Fallback due to parsing error',
       audioSummary: 'Full transcript: ' + transcription.text
     };
   }
 
-  // Generate comprehensive audio analysis
-  const analysis = `AUDIO CONTEXT ANALYSIS:
+  // Generate comprehensive audio analysis with better context
+  const analysis = `ENHANCED AUDIO CONTEXT ANALYSIS:
 
-PRIMARY DIALOGUE: ${separatedAudio.dialogue?.content || 'None detected'}
+AUDIO TYPE: ${separatedAudio.audioType?.toUpperCase()} (${Math.round((separatedAudio.confidence || 0.5) * 100)}% confidence)
+REASONING: ${separatedAudio.reasoning || 'Not provided'}
+
+PRIMARY DIALOGUE: ${separatedAudio.dialogue?.isEmpty ? 'None detected' : separatedAudio.dialogue?.content || 'None detected'}
 Context Priority: ${separatedAudio.contextPriority || 'Unknown'}
 Key Message: ${separatedAudio.dialogue?.primaryContext || 'Not available'}
 
-MUSIC/LYRICS: ${separatedAudio.musicLyrics?.content || 'None detected'}
+MUSIC/LYRICS: ${separatedAudio.musicLyrics?.isEmpty ? 'None detected' : separatedAudio.musicLyrics?.content || 'None detected'}
+Song Title: ${separatedAudio.musicLyrics?.songTitle || 'Unknown'}
 Musical Mood: ${separatedAudio.musicLyrics?.mood || 'Not detected'}
+Music Role: ${separatedAudio.musicLyrics?.role || 'Unknown'}
 
 SOUND DESIGN: ${separatedAudio.soundDesign?.effects || 'Standard audio'}
+Audio Quality: ${separatedAudio.soundDesign?.audioQuality || 'Unknown'}
+Instruments: ${separatedAudio.soundDesign?.musicInstruments || 'None detected'}
 
 OVERALL CONTEXT: ${separatedAudio.audioSummary || 'Audio provides context through transcript'}`;
 
     const analysisDuration = Date.now() - analysisStartTime;
     const totalDuration = Date.now() - startTime;
     
-    logWithTimestamp('✅ Audio analysis complete', { 
+    logWithTimestamp('✅ Enhanced audio analysis complete', { 
       transcriptionDuration: `${transcriptionDuration}ms`,
       analysisDuration: `${analysisDuration}ms`,
       totalDuration: `${totalDuration}ms`,
@@ -875,289 +1193,86 @@ OVERALL CONTEXT: ${separatedAudio.audioSummary || 'Audio provides context throug
   }
 }
 
-async function generateComprehensiveAnalysis(frameAnalyses, audioAnalysis) {
+async function generateComprehensiveAnalysis(frameAnalyses, audioAnalysis, fps = 2, analysisMode = 'standard') {
   const startTime = Date.now();
-  logWithTimestamp('🚀 Starting comprehensive analysis (single request optimization)');
+  logWithTimestamp('🚀 Starting multi-step comprehensive analysis');
 
   try {
-    const videoLength = (frameAnalyses.length / 2).toFixed(1);
-    const transcript = audioAnalysis.transcription?.text || 'No audio transcript';
+    // Step 1: Generate detailed scene analysis first
+    logWithTimestamp('📋 Step 1: Generating detailed scene analysis');
+    const scenes = await generateSceneAnalysis(frameAnalyses, audioAnalysis, fps);
     
-    // Extract all on-screen text from frames
-    const allFrameText = frameAnalyses.map(frame => {
-      const textMatch = frame.analysis.match(/ON_SCREEN_TEXT:\s*([^-\n]+)/i);
-      return textMatch ? textMatch[1].trim() : '';
-    }).filter(text => text && text !== 'None detected').join(' | ');
+    // Step 2: Extract video hooks
+    logWithTimestamp('🎣 Step 2: Extracting video hooks');
+    const hooks = await extractVideoHooks(frameAnalyses, audioAnalysis);
+    
+    // Step 3: Categorize video
+    logWithTimestamp('📂 Step 3: Categorizing video');
+    const videoCategory = await categorizeVideo(frameAnalyses, audioAnalysis, scenes);
+    
+    // Step 4: Analyze video context
+    logWithTimestamp('🧠 Step 4: Analyzing video context');
+    const contextualAnalysis = await analyzeVideoContext(frameAnalyses, audioAnalysis, scenes);
+    
+    // Step 5: Generate strategic overview
+    logWithTimestamp('📊 Step 5: Generating strategic overview');
+    const strategicOverview = await generateStrategicOverview(scenes, audioAnalysis, contextualAnalysis, videoCategory);
+    
+    // Step 6: Generate content structure
+    logWithTimestamp('🏗️ Step 6: Generating content structure');
+    const contentStructure = await generateContentStructure(frameAnalyses, audioAnalysis, scenes, fps);
 
-    // Get dialogue vs music context
-    const dialogueContent = audioAnalysis.separatedAudio?.dialogue?.content || '';
-    const musicContent = audioAnalysis.separatedAudio?.musicLyrics?.content || '';
-    const contextPriority = audioAnalysis.separatedAudio?.contextPriority || 'unknown';
-
-    const comprehensivePrompt = `You are a premium video content strategist and analysis expert. Analyze this ${videoLength}-second video and provide a comprehensive, detailed analysis matching professional standards.
-
-VIDEO DATA:
-Duration: ${videoLength} seconds
-Frame Count: ${frameAnalyses.length}
-Audio Transcript: "${transcript}"
-On-Screen Text: "${allFrameText}"
-
-DETAILED FRAME ANALYSIS:
-${frameAnalyses.slice(0, 12).map((frame, i) => 
-  `${(i * 0.5).toFixed(1)}s: ${frame.contextualMeaning || frame.analysis.substring(0, 300)}`
-).join('\n')}
-
-AUDIO CONTEXT:
-${audioAnalysis.separatedAudio ? `
-- Dialogue: ${dialogueContent}
-- Music/Lyrics: ${musicContent}
-- Sound Design: ${audioAnalysis.separatedAudio.soundDesign?.effects || 'Standard'}
-- Context Priority: ${contextPriority}
-- Audio Summary: ${audioAnalysis.separatedAudio.audioSummary || 'Not available'}
-` : `Full Audio: ${transcript}`}
-
-CRITICAL SCENE ANALYSIS REQUIREMENTS:
-A SCENE is defined by significant changes in:
-- VISUAL CUTS: Camera angle changes, shot type changes, framing shifts
-- CONTEXT CHANGES: Color grading shifts (color to black & white), lighting changes
-- AUDIO TRANSITIONS: Music changes, volume shifts, silence moments, new audio elements
-- TEXT REVEALS: New text overlays, text content changes, punchline reveals
-- NARRATIVE BEATS: Setup moments, tension building, ironic reveals, punchlines
-- VISUAL EFFECTS: Filters applied/removed, speed changes, transitions
-
-REQUIREMENTS:
-1. MUST identify each distinct scene based on these cinematic changes
-2. MUST capture the complete narrative arc through scene progression
-3. MUST analyze how each scene change serves the story/comedy
-4. MUST identify text overlay timing and content changes as scene markers
-5. MUST track psychological progression through visual and audio cues
-
-Provide a comprehensive premium analysis in this JSON format:
-
-{
-  "videoCategory": {
-    "category": "[educational/entertainment/promotional/tutorial/lifestyle/comedy/etc]",
-    "confidence": 0.95,
-    "subcategory": "[specific type like workplace comedy, tutorial, reaction, etc]",
-    "platform": "[optimized for TikTok/Instagram/YouTube/etc]",
-    "reasoning": "[detailed explanation of why this category was chosen based on content analysis]"
-  },
-  "scenes": [
-    {
-      "sceneNumber": 1,
-      "timeRange": "[start time to when first significant change occurs]",
-      "title": "[e.g., 'Opening Setup' or 'Initial Statement Scene']",
-      "description": "[Describe what happens until the first cinematic change - camera cut, text overlay, audio shift, etc.]",
-      "duration": "[actual duration until first scene change]",
-      "framing": {
-        "shotTypes": ["medium shot", "close-up"],
-        "cameraMovement": "[static/pan/zoom/handheld/tracking/etc]",
-        "composition": "[detailed composition analysis: rule of thirds, leading lines, depth, etc]"
-      },
-      "lighting": {
-        "style": "[natural/artificial/mixed]",
-        "mood": "[bright/dark/moody/dramatic/soft/etc]",
-        "direction": "[front-lit/back-lit/side-lit/top-lit/etc]",
-        "quality": "[hard/soft/diffused/harsh/etc]"
-      },
-      "mood": {
-        "emotional": "[happy/serious/energetic/calm/tense/amused/optimistic/etc]",
-        "atmosphere": "[bright/dark/playful/professional/relaxed/intense/etc]",
-        "tone": "[casual/formal/humorous/dramatic/ironic/etc]"
-      },
-      "actionMovement": {
-        "movement": "[detailed description of physical actions and movements]",
-        "direction": "[screen direction, eye lines, movement patterns]",
-        "pace": "[slow/medium/fast/dynamic/static]"
-      },
-      "audio": {
-        "music": "[description of background music, genre, mood]",
-        "soundDesign": "[ambient sounds, effects, audio atmosphere]",
-        "dialogue": "[spoken words or voice-over content]"
-      },
-      "visualEffects": {
-        "transitions": "[cuts/fades/wipes/dissolves/etc]",
-        "effects": "[filters, color grading, speed changes, overlays, etc]",
-        "graphics": "[text overlays, graphics, UI elements, typography]"
-      },
-      "settingEnvironment": {
-        "location": "[specific location description]",
-        "environment": "[indoor/outdoor/studio/natural/etc]",
-        "background": "[detailed background elements and their significance]"
-      },
-      "subjectsFocus": {
-        "main": "[primary subjects, people, objects of focus]",
-        "secondary": "[supporting elements, background subjects]",
-        "focus": "[what specifically draws viewer attention and why]"
-      },
-      "intentImpactAnalysis": {
-        "creatorIntent": "[what the creator wants to achieve in this specific scene]",
-        "howExecuted": "[specific techniques and methods used to achieve the intent]",
-        "viewerImpact": "[expected psychological and emotional effect on viewers]",
-        "narrativeSignificance": "[how this scene contributes to the overall story/message - e.g., 'Sets up expectation for ironic payoff']"
-      },
-      "textDialogue": {
-        "content": "[exact text content visible on screen or spoken]",
-        "style": "[font style, overlay treatment, visual presentation]"
+    // Combine all analysis results
+    const videoLength = (frameAnalyses.length / fps).toFixed(1);
+    const result = {
+      videoCategory,
+      scenes,
+      hooks,
+      contextualAnalysis,
+      strategicOverview,
+      contentStructure,
+      videoMetadata: {
+        totalFrames: frameAnalyses.length,
+        frameRate: fps,
+        analysisMode: analysisMode,
+        analysisTimestamp: new Date().toISOString(),
+        totalDuration: videoLength + 's'
       }
-    },
-    {
-      "sceneNumber": 2,
-      "timeRange": "[when visual/audio/text change occurs]",
-      "title": "[e.g., 'Text Overlay Reinforcement' or 'Audio Shift Moment']",
-      "description": "[Describe the specific change that defines this new scene - camera cut, text reveal, music change, etc.]",
-      "duration": "[actual duration based on when changes occur]",
-      [... same structure as scene 1 ...]
-    },
-    {
-      "sceneNumber": 3,
-      "timeRange": "[when next significant change occurs]",
-      "title": "[e.g., 'Black & White Punchline Reveal' or 'Silent Moment for Impact']",
-      "description": "[The specific cinematic change that creates this scene - color shift, text punchline, audio drop, etc.]",
-      "duration": "[actual duration based on cinematic changes]",
-      [... same structure as scene 1 ...]
-    }
-  ],
-  "hooks": [
-    {
-      "timestamp": "0.0s",
-      "type": "[visual_disrupter/question/positive_statement/negative_statement/action_statement/contrast/irony]",
-      "description": "[detailed description of what specifically happens that grabs attention]",
-      "impact": "[high/medium/low]",
-      "element": "[specific visual, audio, or textual element that creates the hook]",
-      "psychologicalTrigger": "[what psychological mechanism this hook activates]"
-    }
-  ],
-  "contextualAnalysis": {
-    "creatorIntent": {
-      "primaryIntent": "[main goal: educate/entertain/sell/inspire/build community/etc]",
-      "targetAudience": "[specific demographic, interests, pain points they address]",
-      "desiredAction": "[what creator wants viewer to do: share, comment, follow, buy, etc]",
-      "howAchieved": "[specific methods used to achieve the intent]"
-    },
-    "messageDelivery": {
-      "coreMessage": "[main message distilled to one clear sentence]",
-      "deliveryMethod": "[storytelling/demonstration/comparison/humor/irony/etc]",
-      "persuasionTechniques": ["[specific techniques: social proof, authority, scarcity, etc]"],
-      "emotionalJourney": "[how viewer emotions are guided through the content - setup → anticipation → payoff]"
-    },
-    "themes": ["[key themes like workplace dynamics, expectations vs reality, etc]"],
-    "psychologicalAppeal": "[detailed analysis of psychological triggers and why they work]",
-    "socialContext": "[cultural references, shared experiences, universal truths addressed]"
-  },
-  "strategicOverview": {
-    "videoOverview": "[comprehensive 3-4 sentence summary covering content, purpose, and execution style]",
-    "narrativeArc": {
-      "arcType": "[comedy/educational/story/transformation/comparison/reveal/etc - based on video category]",
-      "structure": "[detailed breakdown of the complete narrative progression specific to content type]",
-      "keyBeats": "[specific story beats that drive the narrative forward - setup, conflict, resolution, etc]",
-      "examples": {
-        "comedy": "Setup (establishing normal situation) → Escalation (building tension/expectation) → Subversion (unexpected twist) → Punchline (comedic payoff) → Resolution (aftermath/reaction)",
-        "educational": "Hook (problem/question) → Context (why it matters) → Steps (tutorial progression) → Demonstration (showing results) → Reinforcement (key takeaways)",
-        "story": "Ordinary World → Inciting Incident → Rising Action → Climax → Resolution → New Normal",
-        "transformation": "Before State → Catalyst → Process → Obstacles → Breakthrough → After State",
-        "comparison": "Option A Introduction → Option B Introduction → Contrast Building → Decisive Moment → Clear Winner → Justification"
-      }
-    },
-    "whyItWorks": "[detailed analysis of core psychological/emotional appeal, focusing on universal human experiences, recognition triggers, and social validation mechanisms that make this content effective]",
-    "successFormula": "[detailed step-by-step breakdown with timing: Scene 1 (setup/hook) → Scene 2 (development) → Scene 3 (escalation) → Scene 4 (payoff/punchline), including psychological reasoning for each transition and how it serves the narrative arc]",
-    "universalPrinciples": "[underlying psychological and structural patterns that can be adapted across industries - extract the core psychology, not just surface mechanics. Include principles like contrast, expectation management, social proof, etc]",
-    "technicalRequirements": "[detailed breakdown of essential vs optional production elements: minimum viable version requirements, professional enhancements, budget considerations, equipment needs]",
-    "implementationFramework": {
-      "preProduction": "[concept development, scenario planning, script/storyboard creation, location scouting, talent casting, equipment planning, shot list creation]",
-      "production": "[filming techniques, camera work, framing, lighting setup, talent direction, audio recording, multiple takes/angles, on-set execution]", 
-      "postProduction": "[editing, text overlays, graphics, color grading, audio mixing, transitions, effects, timing adjustments, final output optimization]",
-      "successMetrics": "[engagement rates, completion rates, shares, comments, saves, click-through rates, conversion metrics, audience retention graphs]"
-    },
-    "adaptabilityGuidelines": "[detailed guidance on modifying for different industries/audiences with 3-4 specific industry adaptation examples showing how core principles translate: retail, healthcare, tech, education, etc]",
-    "viralPotential": "[comprehensive analysis of shareability factors: social validation triggers, sharing motivations, platform-specific optimization, audience engagement patterns, and viral mechanics]",
-    "resourceScaling": "[budget considerations from minimum viable to professional production, including equipment, location, talent, and post-production requirements]"
-  },
-  "contentStructure": "[detailed analysis of narrative flow, pacing strategies, engagement techniques, escalation patterns, and specific structural elements that create viral potential. Include timing analysis, attention retention techniques, and psychological progression through the content]"
-}
-
-CRITICAL INSTRUCTIONS:
-1. Identify scenes based on CINEMATIC CHANGES: visual cuts, context shifts, audio transitions, text reveals
-2. MUST capture the complete story arc including setup, development, and payoff moments
-3. Each scene represents a distinct cinematic or narrative change, not arbitrary time segments
-4. Pay special attention to text overlay changes - they often mark new scenes and contain punchlines
-5. Analyze how each scene change serves the psychological progression and narrative timing
-6. Focus on WHY each cinematic choice works and HOW it contributes to the viral effect
-7. NARRATIVE ARC ANALYSIS: Identify the specific narrative structure based on content type:
-   - COMEDY: Setup → Build → Subversion → Punchline → Resolution
-   - EDUCATIONAL: Hook → Context → Steps → Demo → Reinforcement  
-   - STORY: Ordinary World → Inciting Incident → Rising Action → Climax → Resolution
-   - TRANSFORMATION: Before → Catalyst → Process → Breakthrough → After
-   - COMPARISON: Option A → Option B → Contrast → Decision → Winner
-8. In strategicOverview.narrativeArc, provide the COMPLETE narrative progression showing how each scene serves the overall story structure
-9. Explain how the narrative arc creates psychological engagement and drives viewer retention
-10. PRODUCTION PHASE CATEGORIZATION - Ensure proper separation:
-    - PRE-PRODUCTION: Concept development, planning, scripting, casting, location scouting, equipment planning
-    - PRODUCTION: Actual filming, camera work, lighting, talent direction, audio recording, on-set execution
-    - POST-PRODUCTION: Editing, text overlays, graphics, color grading, audio mixing, effects, transitions
-    - SUCCESS METRICS: Engagement rates, completion rates, shares, comments, analytics to track`;
-
-    const response = await handleRateLimit(async () => {
-      return await openai.chat.completions.create({
-        model: "gpt-4o",
-        messages: [
-          {
-            role: "system",
-            content: "You are a viral content strategist and video analysis expert. Your role is to analyze technical video breakdowns and transform them into actionable content creation strategies. Focus on: 1) Core psychological and structural elements that make content successful 2) Universal patterns adaptable across contexts 3) Step-by-step replication frameworks 4) WHY content works, not just WHAT happens 5) Adaptable templates for different industries. Prioritize underlying psychology, narrative structure, and replicable techniques over surface-level technical details. Always provide valid JSON with no additional text."
-          },
-          {
-            role: "user",
-            content: comprehensivePrompt
-          }
-        ],
-        max_tokens: 8000,
-        temperature: 0.3
-      });
-    });
-
-    let result;
-    try {
-      result = JSON.parse(response.choices[0].message.content);
-      logWithTimestamp('✅ JSON parsing successful');
-    } catch (parseError) {
-      logWithTimestamp('⚠️ JSON parsing failed, attempting to extract JSON', { error: parseError.message });
-      
-      // Try to extract JSON from response
-      const jsonMatch = response.choices[0].message.content.match(/\{[\s\S]*\}/);
-      if (jsonMatch) {
-        result = JSON.parse(jsonMatch[0]);
-        logWithTimestamp('✅ JSON extraction successful');
-      } else {
-        throw new Error('Failed to parse comprehensive analysis JSON');
-      }
-    }
+    };
     
     const duration = Date.now() - startTime;
-    logWithTimestamp('✅ Comprehensive analysis complete', { 
-      duration: `${duration}ms`,
-      sceneCount: result.scenes?.length || 0,
-      hookCount: result.hooks?.length || 0,
-      category: result.videoCategory?.category || 'unknown'
+    logWithTimestamp('✅ Multi-step comprehensive analysis complete', { 
+      duration: duration + 'ms',
+      sceneCount: scenes.length,
+      hookCount: hooks.length,
+      category: videoCategory.category,
+      steps: 6
     });
 
     return result;
 
   } catch (error) {
     const duration = Date.now() - startTime;
-    logWithTimestamp('❌ Comprehensive analysis failed', { 
+    logWithTimestamp('❌ Multi-step comprehensive analysis failed', { 
       error: error.message,
-      duration: `${duration}ms`
+      duration: duration + 'ms'
     });
     
-    // Return fallback structure
+    // Return fallback structure with whatever we managed to complete
     return {
       videoCategory: { category: 'unknown', confidence: 0.5, subcategory: 'analysis failed' },
       scenes: [],
       hooks: [],
       contextualAnalysis: { creatorIntent: { primaryIntent: 'unknown' }, themes: [] },
-      strategicOverview: { videoOverview: 'Analysis failed: ' + error.message },
-      contentStructure: 'Comprehensive analysis failed due to: ' + error.message,
+      strategicOverview: { videoOverview: 'Multi-step analysis failed: ' + error.message },
+      contentStructure: 'Multi-step comprehensive analysis failed due to: ' + error.message,
+      videoMetadata: {
+        totalFrames: frameAnalyses.length,
+        frameRate: fps,
+        analysisMode: analysisMode,
+        analysisTimestamp: new Date().toISOString(),
       error: error.message
+      }
     };
   }
 }
@@ -1310,17 +1425,19 @@ ${scenes.map((scene, i) => `- Scene ${i + 1}: ${scene.contextualMeaning?.intent 
   }
 }
 
-async function analyzeVideo(videoPath) {
+async function analyzeVideo(videoPath, userId = null, creditsToDeduct = null, requestId = 'unknown', analysisMode = 'standard') {
   const startTime = Date.now();
-  logWithTimestamp('🎬 Starting complete video analysis', { videoPath });
+  logWithTimestamp('🎬 Starting complete video analysis', { videoPath, analysisMode });
 
   try {
   // Extract frames and audio
     logWithTimestamp('🔄 Phase 1: Extracting frames and audio');
-    const framesPromise = extractFrames(videoPath);
+    await updateProgress(requestId, 'extraction', 5, 'Downloading and extracting frames from video...');
+    const framesPromise = extractFrames(videoPath, analysisMode);
     const audioPromise = extractAudio(videoPath);
     
-    const [frames, audioPath] = await Promise.all([framesPromise, audioPromise]);
+    const [frameData, audioPath] = await Promise.all([framesPromise, audioPromise]);
+    const { frames, fps } = frameData;
     
     const extractionDuration = Date.now() - startTime;
     logWithTimestamp('✅ Phase 1 complete: Extraction finished', { 
@@ -1331,9 +1448,10 @@ async function analyzeVideo(videoPath) {
 
     // Analyze frames in smart batches for efficiency
     logWithTimestamp('🔄 Phase 2: Analyzing frames in batches');
+    await updateProgress(requestId, 'frame_analysis', 10, `Starting frame analysis for ${frames.length} frames...`, { frameCount: frames.length });
     const frameAnalysisStartTime = Date.now();
     
-    const frameAnalyses = await analyzeFramesInBatches(frames);
+    const frameAnalyses = await analyzeFramesInBatches(frames, requestId);
 
     const frameAnalysisDuration = Date.now() - frameAnalysisStartTime;
     logWithTimestamp('✅ Phase 2 complete: Frame analysis finished', { 
@@ -1344,6 +1462,7 @@ async function analyzeVideo(videoPath) {
 
   // Analyze audio
     logWithTimestamp('🔄 Phase 3: Analyzing audio');
+    await updateProgress(requestId, 'audio_analysis', 75, 'Analyzing audio and generating transcript...');
     const audioAnalysisStartTime = Date.now();
   const audioAnalysis = await analyzeAudio(audioPath);
     const audioAnalysisDuration = Date.now() - audioAnalysisStartTime;
@@ -1379,9 +1498,10 @@ async function analyzeVideo(videoPath) {
 
     // CONSOLIDATED ANALYSIS - Single API request replaces phases 5-7
     logWithTimestamp('🔄 Phase 5: Comprehensive analysis (single request optimization)');
+    await updateProgress(requestId, 'comprehensive_analysis', 85, 'Generating scenes, hooks, and strategic insights...');
     const comprehensiveAnalysisStartTime = Date.now();
     
-    const comprehensiveResult = await generateComprehensiveAnalysis(frameAnalyses, audioAnalysis);
+    const comprehensiveResult = await generateComprehensiveAnalysis(frameAnalyses, audioAnalysis, fps, analysisMode);
     
     const comprehensiveAnalysisDuration = Date.now() - comprehensiveAnalysisStartTime;
     const finalTotalDuration = Date.now() - startTime;
@@ -1396,7 +1516,7 @@ async function analyzeVideo(videoPath) {
     const result = {
       contentStructure: comprehensiveResult.contentStructure,
       hook: extractHook(frameAnalyses[0]),
-      totalDuration: `${(frames.length / 2).toFixed(1)}s`, // frames.length / 2fps = actual seconds
+      totalDuration: `${(frames.length / fps).toFixed(1)}s`, // frames.length / fps = actual seconds
       scenes: comprehensiveResult.scenes,
       transcript: audioAnalysis.transcription || { text: 'No transcript available', segments: [] },
       hooks: comprehensiveResult.hooks,
@@ -1405,7 +1525,7 @@ async function analyzeVideo(videoPath) {
       strategicOverview: comprehensiveResult.strategicOverview,
       videoMetadata: {
         totalFrames: frames.length,
-        frameRate: 2, // 2 frames per second
+        frameRate: fps, // frames per second based on analysis mode
         analysisTimestamp: new Date().toISOString()
       }
     };
@@ -1422,6 +1542,32 @@ async function analyzeVideo(videoPath) {
         comprehensiveAnalysis: `${comprehensiveAnalysisDuration}ms`
       }
     });
+
+    // Deduct user credits if applicable
+    if (userId && isSupabaseAvailable()) {
+      try {
+        // Fallback compute credits if none provided
+        if (!creditsToDeduct) {
+          const seconds = parseFloat((result.totalDuration || '0').replace(/[^0-9.]/g, '')) || 0;
+          creditsToDeduct = Math.max(1, Math.ceil(seconds / 15));
+        }
+        await updateUserCredits(userId, creditsToDeduct);
+        logWithTimestamp('💳 Credits deducted', { userId, creditsToDeduct });
+      } catch (credErr) {
+        console.error('Failed to deduct credits', credErr);
+      }
+    }
+
+    await updateProgress(requestId, 'complete', 100, 'Analysis complete!', {
+      sceneCount: result.scenes?.length || 0,
+      duration: result.totalDuration,
+      category: result.videoCategory?.category
+    });
+    
+    // Clean up progress state for this request
+    setTimeout(() => {
+      progressState.delete(requestId);
+    }, 60000); // Clean up after 1 minute
 
     return result;
   } catch (error) {
@@ -1503,7 +1649,7 @@ function parseMusicAnalysis(analysis) {
   return result;
 }
 
-async function generateSceneAnalysis(frameAnalyses, audioAnalysis) {
+async function generateSceneAnalysis(frameAnalyses, audioAnalysis, fps = 2) {
   const startTime = Date.now();
   logWithTimestamp('🎬 Starting scene detection and comprehensive analysis', { 
     frameCount: frameAnalyses.length 
@@ -1511,20 +1657,41 @@ async function generateSceneAnalysis(frameAnalyses, audioAnalysis) {
 
   try {
     // Step 1: Detect scene boundaries by analyzing continuity between frames
-    const scenes = detectSceneBoundaries(frameAnalyses);
+    const scenes = detectSceneBoundaries(frameAnalyses, fps);
     logWithTimestamp('🔍 Scene boundaries detected', { sceneCount: scenes.length });
 
-    // Step 2: Generate comprehensive analysis for each scene
-    const comprehensiveScenes = await Promise.all(
-      scenes.map(async (scene, sceneIndex) => {
-        return await generateSceneCard(scene, sceneIndex, audioAnalysis);
-      })
-    );
+    // Step 2: Generate comprehensive analysis for each scene with batching to avoid token limits
+    const batchSize = 5; // Process 5 scenes at a time to avoid token limits
+    const comprehensiveScenes = [];
+    
+    for (let i = 0; i < scenes.length; i += batchSize) {
+      const sceneBatch = scenes.slice(i, i + batchSize);
+      logWithTimestamp(`🎬 Processing scene batch ${Math.floor(i/batchSize) + 1}/${Math.ceil(scenes.length/batchSize)}`, {
+        sceneCount: sceneBatch.length,
+        sceneNumbers: sceneBatch.map((_, idx) => i + idx + 1)
+      });
+      
+      // Process scenes in parallel within each batch
+      const batchResults = await Promise.all(
+        sceneBatch.map(async (scene, batchIndex) => {
+          const sceneIndex = i + batchIndex;
+          return await generateSceneCard(scene, sceneIndex, audioAnalysis);
+        })
+      );
+      
+      comprehensiveScenes.push(...batchResults);
+      
+      // Small delay between batches to avoid rate limiting
+      if (i + batchSize < scenes.length) {
+        await new Promise(resolve => setTimeout(resolve, 100));
+      }
+    }
 
     const duration = Date.now() - startTime;
     logWithTimestamp('✅ Scene analysis complete', {
       sceneCount: comprehensiveScenes.length,
-      duration: `${duration}ms`
+      duration: `${duration}ms`,
+      averageTimePerScene: `${Math.round(duration / comprehensiveScenes.length)}ms`
     });
 
     return comprehensiveScenes;
@@ -1534,27 +1701,56 @@ async function generateSceneAnalysis(frameAnalyses, audioAnalysis) {
   }
 }
 
-function detectSceneBoundaries(frameAnalyses) {
-  logWithTimestamp('🔍 Detecting scene boundaries');
+function logSceneDecision(frameIndex, isNewScene, reasons) {
+  const timestamp = new Date().toISOString().split('T')[1].split('.')[0];
+  const decision = isNewScene ? '✅ NEW SCENE' : '➡️  CONTINUE';
+  const reasonsText = Array.isArray(reasons) && reasons.length > 0 ? reasons.join(', ') : 'No significant changes';
   
+  console.log(`[${timestamp}] 🎬 Frame ${frameIndex}: ${decision} (${reasonsText})`);
+}
+
+function detectSceneBoundaries(frameAnalyses, fps = 2) {
+  logWithTimestamp('🎬 Starting enhanced scene boundary detection', {
+    totalFrames: frameAnalyses.length,
+    expectedDuration: `${(frameAnalyses.length / fps).toFixed(1)}s`,
+    fps: fps
+  });
+
   const scenes = [];
   let currentScene = {
     startFrame: 0,
     frames: [frameAnalyses[0]]
   };
 
+  // Enhanced scene detection with lower thresholds
   for (let i = 1; i < frameAnalyses.length; i++) {
     const currentFrame = frameAnalyses[i];
     const previousFrame = frameAnalyses[i - 1];
     
-    // Simple scene boundary detection based on significant changes
-    const isNewScene = detectSceneChange(currentFrame.analysis, previousFrame.analysis);
+    // Enhanced scene boundary detection
+    const sceneChangeResult = detectSceneChange(currentFrame.analysis, previousFrame.analysis);
+    const isNewScene = sceneChangeResult.hasChange;
     
-    if (isNewScene && currentScene.frames.length >= 2) {
+    // Detailed decision logging
+    logSceneDecision(i, isNewScene, sceneChangeResult.reasons);
+    
+    // LOWERED THRESHOLD: Minimum 2 seconds (4 frames at 2fps) per scene instead of 3 frames
+    const minFramesPerScene = Math.max(2, Math.floor(2 * fps)); // 2 seconds minimum
+    
+    if (isNewScene && currentScene.frames.length >= minFramesPerScene) {
       // End current scene
       currentScene.endFrame = i - 1;
       currentScene.duration = currentScene.frames.length;
       scenes.push(currentScene);
+      
+      logWithTimestamp(`🎬 Scene ${scenes.length} detected`, {
+        startFrame: currentScene.startFrame,
+        endFrame: currentScene.endFrame,
+        duration: `${(currentScene.duration / fps).toFixed(1)}s`,
+        frameCount: currentScene.frames.length,
+        reasons: sceneChangeResult.reasons,
+        changeScore: sceneChangeResult.changeScore
+      });
       
       // Start new scene
       currentScene = {
@@ -1564,52 +1760,347 @@ function detectSceneBoundaries(frameAnalyses) {
     } else {
       // Continue current scene
       currentScene.frames.push(currentFrame);
+      
+      // FORCE SCENE BREAK: If scene gets too long (>8 seconds), force a break
+      const maxFramesPerScene = Math.floor(8 * fps); // 8 seconds max
+      if (currentScene.frames.length >= maxFramesPerScene) {
+        logWithTimestamp(`🎬 Forcing scene break due to length`, {
+          currentFrameCount: currentScene.frames.length,
+          maxAllowed: maxFramesPerScene,
+          frameIndex: i
+        });
+        
+        // End current scene
+        currentScene.endFrame = i;
+        currentScene.duration = currentScene.frames.length;
+        scenes.push(currentScene);
+        
+        // Start new scene
+        currentScene = {
+          startFrame: i + 1,
+          frames: []
+        };
+      }
     }
   }
 
-  // Add the last scene
-  currentScene.endFrame = frameAnalyses.length - 1;
-  currentScene.duration = currentScene.frames.length;
-  scenes.push(currentScene);
+  // Add the last scene if it has frames
+  if (currentScene.frames.length > 0) {
+    currentScene.endFrame = frameAnalyses.length - 1;
+    currentScene.duration = currentScene.frames.length;
+    scenes.push(currentScene);
+    
+    logWithTimestamp(`🎬 Final scene ${scenes.length} added`, {
+      startFrame: currentScene.startFrame,
+      endFrame: currentScene.endFrame,
+      duration: `${(currentScene.duration / fps).toFixed(1)}s`,
+      frameCount: currentScene.frames.length
+    });
+  }
 
-  logWithTimestamp('📊 Scene detection results', {
+  logWithTimestamp('📊 Enhanced scene detection results', {
     totalScenes: scenes.length,
-    avgSceneDuration: (scenes.reduce((sum, s) => sum + s.duration, 0) / scenes.length).toFixed(1) + 's'
+    avgSceneDuration: scenes.length > 0 ? (scenes.reduce((sum, s) => sum + s.duration, 0) / fps / scenes.length).toFixed(1) + 's' : '0s',
+    sceneBreakdown: scenes.map((s, i) => `Scene ${i+1}: ${(s.duration / fps).toFixed(1)}s (${s.frames.length} frames)`).join(', '),
+    totalFramesProcessed: frameAnalyses.length
   });
 
   return scenes;
 }
 
 function detectSceneChange(currentAnalysis, previousAnalysis) {
-  // Look for significant changes that indicate a new scene
+  // Enhanced scene change detection with scoring system
   const currentText = currentAnalysis.toLowerCase();
   const previousText = previousAnalysis.toLowerCase();
   
-  // Check for setting changes
+  let changeScore = 0;
+  const reasons = [];
+  
+  // MAJOR CHANGES (High weight)
+  
+  // 1. SETTING / LOCATION changes (Weight: 3) - Updated to match both old and new formats
   const settingChange = (
-    currentText.includes('setting:') && previousText.includes('setting:') &&
-    extractValue(currentText, 'setting:') !== extractValue(previousText, 'setting:')
+    // New batch analysis format
+    (currentText.includes('literal_description:') && previousText.includes('literal_description:') &&
+     !haveSimilarSubjects(extractValue(currentText, 'literal_description:'), extractValue(previousText, 'literal_description:'))) ||
+    // Old format compatibility
+    (currentText.includes('setting:') && previousText.includes('setting:') &&
+     extractValue(currentText, 'setting:') !== extractValue(previousText, 'setting:')) ||
+    (currentText.includes('location:') && previousText.includes('location:') &&
+     extractValue(currentText, 'location:') !== extractValue(previousText, 'location:'))
   );
+  if (settingChange) {
+    changeScore += 3;
+    reasons.push('SETTING_CHANGE');
+  }
   
-  // Check for major framing changes
-  const framingChange = (
-    currentText.includes('framing:') && previousText.includes('framing:') &&
-    extractValue(currentText, 'framing:') !== extractValue(previousText, 'framing:')
-  );
-  
-  // Check for subject changes
+  // 2. SUBJECT changes (Weight: 3) - Updated to match both old and new formats
   const subjectChange = (
-    currentText.includes('subjects:') && previousText.includes('subjects:') &&
-    !haveSimilarSubjects(extractValue(currentText, 'subjects:'), extractValue(previousText, 'subjects:'))
+    // New batch analysis format
+    (currentText.includes('objects_items:') && previousText.includes('objects_items:') &&
+     !haveSimilarSubjects(extractValue(currentText, 'objects_items:'), extractValue(previousText, 'objects_items:'))) ||
+    // Old format compatibility
+    (currentText.includes('subjects:') && previousText.includes('subjects:') &&
+     !haveSimilarSubjects(extractValue(currentText, 'subjects:'), extractValue(previousText, 'subjects:'))) ||
+    (currentText.includes('main focus') && previousText.includes('main focus') &&
+     !haveSimilarSubjects(extractValue(currentText, 'main focus'), extractValue(previousText, 'main focus')))
   );
+  if (subjectChange) {
+    changeScore += 3;
+    reasons.push('SUBJECT_CHANGE');
+  }
 
-  return settingChange || (framingChange && subjectChange);
+  // 3. VISUAL CONTRAST changes (Weight: 3) - Enhanced detection
+  const visualContrastChange = (
+    // Lighting changes
+    (currentText.includes('bright') && previousText.includes('dark')) ||
+    (currentText.includes('dark') && previousText.includes('bright')) ||
+    (currentText.includes('dim') && previousText.includes('well-lit')) ||
+    (currentText.includes('well-lit') && previousText.includes('dim')) ||
+    // Color changes
+    (currentText.includes('colorful') && previousText.includes('monochrome')) ||
+    (currentText.includes('monochrome') && previousText.includes('colorful')) ||
+    (currentText.includes('black and white') && !previousText.includes('black and white')) ||
+    (previousText.includes('black and white') && !currentText.includes('black and white'))
+  );
+  if (visualContrastChange) {
+    changeScore += 3;
+    reasons.push('VISUAL_CONTRAST');
+  }
+
+  // 4. FRAMING changes (Weight: 2) - Enhanced camera angle detection
+  const framingChange = (
+    // Shot type changes
+    (currentText.includes('close-up') && !previousText.includes('close-up')) ||
+    (currentText.includes('wide shot') && !previousText.includes('wide shot')) ||
+    (currentText.includes('medium shot') && !previousText.includes('medium shot')) ||
+    (currentText.includes('overhead') && !previousText.includes('overhead')) ||
+    (currentText.includes('low angle') && !previousText.includes('low angle')) ||
+    (currentText.includes('high angle') && !previousText.includes('high angle')) ||
+    // Camera position changes
+    (currentText.includes('front view') && !previousText.includes('front view')) ||
+    (currentText.includes('side view') && !previousText.includes('side view')) ||
+    (currentText.includes('behind') && !previousText.includes('behind')) ||
+    (currentText.includes('perspective') && previousText.includes('perspective') &&
+     extractValue(currentText, 'perspective') !== extractValue(previousText, 'perspective'))
+  );
+  if (framingChange) {
+    changeScore += 2; // Reduced from 3 to 2 for more sensitive detection
+    reasons.push('FRAMING_CHANGE');
+  }
+
+  // 4.5. FOCUS changes (Weight: 1) - New detection for focus shifts
+  const focusChange = (
+    // Focus subject changes
+    (currentText.includes('focus') && previousText.includes('focus') &&
+     extractValue(currentText, 'focus') !== extractValue(previousText, 'focus')) ||
+    // Depth of field changes
+    (currentText.includes('background') && previousText.includes('foreground')) ||
+    (currentText.includes('foreground') && previousText.includes('background')) ||
+    // Object vs person focus
+    (currentText.includes('person') && previousText.includes('object')) ||
+    (currentText.includes('object') && previousText.includes('person'))
+  );
+  if (focusChange) {
+    changeScore += 1;
+    reasons.push('FOCUS_CHANGE');
+  }
+
+  // MODERATE CHANGES (Medium weight)
+  
+  // 5. ACTION changes (Weight: 2) - Updated to match both old and new formats
+  const actionChange = (
+    // New batch analysis format
+    (currentText.includes('body_language:') && previousText.includes('body_language:') &&
+     extractValue(currentText, 'body_language:') !== extractValue(previousText, 'body_language:')) ||
+    // Old format compatibility
+    (currentText.includes('action:') && previousText.includes('action:') &&
+     extractValue(currentText, 'action:') !== extractValue(previousText, 'action:')) ||
+    // Detect major action transitions
+    (currentText.includes('sitting') && previousText.includes('standing')) ||
+    (currentText.includes('standing') && previousText.includes('sitting')) ||
+    (currentText.includes('walking') && previousText.includes('stationary')) ||
+    (currentText.includes('stationary') && previousText.includes('walking'))
+  );
+  if (actionChange) {
+    changeScore += 2;
+    reasons.push('ACTION_CHANGE');
+  }
+  
+  // 6. ON-SCREEN TEXT changes (Weight: 2) - ENHANCED: Dialogue-prioritized text detection
+  // Support both old and new formats for dialogue detection
+  const currentDialogue = extractValue(currentText, 'dialogue:') || 
+                          extractValue(currentText, 'overlays_reactions:') ||
+                          extractValue(currentText, 'setup_elements:');
+  const previousDialogue = extractValue(previousText, 'dialogue:') || 
+                           extractValue(previousText, 'overlays_reactions:') ||
+                           extractValue(previousText, 'setup_elements:');
+  
+  // Helper function to check if text is progressive (one builds on the other)
+  const isProgressiveText = (current, previous) => {
+    if (!current || !previous || current.length < 3 || previous.length < 3) return false;
+    
+    // Clean text for comparison (remove punctuation, normalize spaces)
+    const cleanCurrent = current.toLowerCase().replace(/[^\w\s]/g, '').replace(/\s+/g, ' ').trim();
+    const cleanPrevious = previous.toLowerCase().replace(/[^\w\s]/g, '').replace(/\s+/g, ' ').trim();
+    
+    // Check if one contains the other (progressive animation)
+    return cleanCurrent.includes(cleanPrevious) || cleanPrevious.includes(cleanCurrent);
+  };
+  
+  // Check if there's active dialogue/narration in either frame
+  const hasActiveDialogue = (currentDialogue && currentDialogue.length > 5) || 
+                           (previousDialogue && previousDialogue.length > 5);
+  
+  // PRIORITY RULE: If there's dialogue, ignore on-screen text changes for scene detection
+  let textOverlayChange = false;
+  
+  if (!hasActiveDialogue) {
+    // Only consider text changes when there's NO dialogue
+    
+    // Check dialogue text changes (when no active speech)
+    const isCompletelyNewDialogue = currentDialogue !== previousDialogue && 
+      !isProgressiveText(currentDialogue, previousDialogue) && 
+      currentDialogue && 
+      previousDialogue;
+    
+    // Check generic text changes (when no active speech)
+    const currentGenericText = extractValue(currentText, 'text');
+    const previousGenericText = extractValue(previousText, 'text');
+    const isCompletelyNewText = currentGenericText !== previousGenericText && 
+      !isProgressiveText(currentGenericText, previousGenericText) && 
+      currentGenericText && 
+      previousGenericText;
+    
+    // Detect text appearance/disappearance (when no active speech)
+    const textAppearanceChange = (
+      (currentText.includes('text') && !previousText.includes('text')) ||
+      (!currentText.includes('text') && previousText.includes('text'))
+    );
+    
+    textOverlayChange = isCompletelyNewDialogue || isCompletelyNewText || textAppearanceChange;
+  }
+  
+  // DEBUG: Log text progression decisions
+  if (currentDialogue || previousDialogue) {
+    console.log(`📝 Text Analysis: "${previousDialogue}" → "${currentDialogue}" | Progressive: ${isProgressiveText(currentDialogue, previousDialogue)} | Has Dialogue: ${hasActiveDialogue} | New Scene: ${textOverlayChange}`);
+  }
+  
+  if (textOverlayChange) {
+    changeScore += 2;
+    reasons.push('TEXT_OVERLAY');
+  }
+
+  // 7. NARRATIVE BEATS (Weight: 2) - Enhanced detection
+  const narrativeBeatChange = (
+    // Emotional state changes  
+    (currentText.includes('celebration') && !previousText.includes('celebration')) ||
+    (currentText.includes('shock') && !previousText.includes('shock')) ||
+    (currentText.includes('excitement') && !previousText.includes('excitement')) ||
+    (currentText.includes('disappointed') && !previousText.includes('disappointed')) ||
+    (currentText.includes('surprised') && !previousText.includes('surprised')) ||
+    (currentText.includes('confused') && !previousText.includes('confused')) ||
+    (currentText.includes('happy') && previousText.includes('sad')) ||
+    (currentText.includes('sad') && previousText.includes('happy')) ||
+    
+    // Action progression keywords
+    (currentText.includes('discovers') && !previousText.includes('discovers')) ||
+    (currentText.includes('realizes') && !previousText.includes('realizes')) ||
+    (currentText.includes('finds') && !previousText.includes('finds')) ||
+    (currentText.includes('reveals') && !previousText.includes('reveals')) ||
+    (currentText.includes('shows') && !previousText.includes('shows'))
+  );
+  if (narrativeBeatChange) {
+    changeScore += 2;
+    reasons.push('NARRATIVE_BEAT');
+  }
+
+  // MINOR CHANGES (Low weight) - More sensitive detection
+  
+  // 8. MOVEMENT changes (Weight: 1)
+  const movementChange = (
+    (currentText.includes('walking') && !previousText.includes('walking')) ||
+    (currentText.includes('sitting') && !previousText.includes('sitting')) ||
+    (currentText.includes('standing') && !previousText.includes('standing')) ||
+    (currentText.includes('lying') && !previousText.includes('lying')) ||
+    (currentText.includes('moving') && !previousText.includes('moving')) ||
+    (currentText.includes('still') && previousText.includes('moving')) ||
+    (currentText.includes('moving') && previousText.includes('still'))
+  );
+  if (movementChange) {
+    changeScore += 1;
+    reasons.push('MOVEMENT_CHANGE');
+  }
+  
+  // 9. FACIAL EXPRESSION changes (Weight: 1)
+  const expressionChange = (
+    (currentText.includes('smiling') && !previousText.includes('smiling')) ||
+    (currentText.includes('frowning') && !previousText.includes('frowning')) ||
+    (currentText.includes('laughing') && !previousText.includes('laughing')) ||
+    (currentText.includes('crying') && !previousText.includes('crying')) ||
+    (currentText.includes('serious') && !previousText.includes('serious')) ||
+    (currentText.includes('neutral') && !previousText.includes('neutral'))
+  );
+  if (expressionChange) {
+    changeScore += 1;
+    reasons.push('EXPRESSION_CHANGE');
+  }
+
+  // 10. ENVIRONMENT changes (Weight: 1) - New detection
+  const environmentChange = (
+    (currentText.includes('indoor') && previousText.includes('outdoor')) ||
+    (currentText.includes('outdoor') && previousText.includes('indoor')) ||
+    (currentText.includes('bathroom') && !previousText.includes('bathroom')) ||
+    (currentText.includes('kitchen') && !previousText.includes('kitchen')) ||
+    (currentText.includes('bedroom') && !previousText.includes('bedroom')) ||
+    (currentText.includes('car') && !previousText.includes('car')) ||
+    (currentText.includes('street') && !previousText.includes('street'))
+  );
+  if (environmentChange) {
+    changeScore += 1;
+    reasons.push('ENVIRONMENT_CHANGE');
+  }
+
+  // VERY LOWERED THRESHOLD: Scene change occurs if score >= 1 (was 2 before)
+  // ENHANCED SCENE DETECTION: Lowered threshold for better camera angle detection
+  const hasChange = changeScore >= 0.5; // Reduced from 1 to catch more scene changes
+  
+  return {
+    hasChange,
+    changeScore,
+    reasons,
+    details: {
+      settingChange,
+      subjectChange,
+      visualContrastChange,
+      framingChange,
+      actionChange,
+      textOverlayChange,
+      narrativeBeatChange,
+      movementChange,
+      expressionChange,
+      environmentChange
+    }
+  };
 }
 
 function extractValue(text, key) {
-  const regex = new RegExp(`${key}\\s*([^\\n]+)`, 'i');
-  const match = text.match(regex);
-  return match ? match[1].trim() : '';
+  // Try multiple formats to extract the value
+  const patterns = [
+    new RegExp(`${key}\\s*([^\\n-]+)`, 'i'), // Standard format: "KEY: value"
+    new RegExp(`${key}\\s*-\\s*([^\\n]+)`, 'i'), // Dash format: "KEY - value"
+    new RegExp(`${key}\\s*:\\s*([^\\n]+)`, 'i'), // Colon format: "KEY : value"
+    new RegExp(`${key}\\s+([^\\n:]+)`, 'i'), // Space format: "KEY value"
+  ];
+  
+  for (const pattern of patterns) {
+    const match = text.match(pattern);
+    if (match && match[1] && match[1].trim() !== '') {
+      return match[1].trim().replace(/[,\.]$/, ''); // Remove trailing punctuation
+    }
+  }
+  
+  return '';
 }
 
 function haveSimilarSubjects(current, previous) {
@@ -1630,8 +2121,46 @@ async function generateSceneCard(scene, sceneIndex, audioAnalysis) {
     duration: scene.duration
   });
 
-  // Aggregate frame analyses
-  const frameData = scene.frames.map(f => f.analysis).join('\n\n');
+  // Aggregate frame analyses with enhanced error handling
+  const frameData = scene.frames
+    .map(f => f?.analysis || '[Frame analysis missing]')
+    .join('\n\n');
+  
+  // DEBUG: Enhanced frame data structure logging
+  logWithTimestamp(`🔍 Scene ${sceneIndex + 1} frame data check`, {
+    frameCount: scene.frames.length,
+    frameDataLength: frameData.length,
+    firstFrameStructure: scene.frames[0] ? Object.keys(scene.frames[0]) : 'no frames',
+    firstFrameAnalysis: scene.frames[0]?.analysis?.substring(0, 100) || 'no analysis',
+    frameDataPreview: frameData.substring(0, 200) || 'empty frameData',
+    allFramesHaveAnalysis: scene.frames.every(f => f?.analysis && f.analysis.length > 0),
+    frameIndices: scene.frames.map(f => f?.frameIndex || 'unknown'),
+    emptyFrameCount: scene.frames.filter(f => !f?.analysis || f.analysis.length === 0).length
+  });
+  
+  // If no valid frame data, provide fallback
+  if (!frameData || frameData.trim() === '' || frameData.includes('[Frame analysis missing]')) {
+    logWithTimestamp(`⚠️ Scene ${sceneIndex + 1} has insufficient frame data`, {
+      frameData: frameData.substring(0, 100),
+      sceneFrameCount: scene.frames.length,
+      startFrame: scene.startFrame,
+      endFrame: scene.endFrame
+    });
+    
+    // Return a fallback scene card with proper time conversion
+    const durationInSeconds = (scene.duration / 2).toFixed(1); // Convert frames to seconds (2fps)
+    const startTimeSeconds = Math.round(scene.startFrame * 0.5);
+    const endTimeSeconds = Math.round(scene.endFrame * 0.5);
+    
+    return {
+      sceneNumber: sceneIndex + 1,
+      duration: `${durationInSeconds}s`,
+      timeRange: `${startTimeSeconds}s - ${endTimeSeconds}s`,
+      title: `[Analysis Unavailable]`,
+      description: "[Frame analysis data unavailable - visual details cannot be determined]",
+      error: "Insufficient frame analysis data"
+    };
+  }
   
   // Get audio segment for this scene
   const audioSegment = getAudioSegmentForScene(scene, audioAnalysis);
@@ -1643,37 +2172,33 @@ async function generateSceneCard(scene, sceneIndex, audioAnalysis) {
       messages: [
         {
           role: "user",
-          content: `Analyze this video scene (${scene.duration} seconds, frames ${scene.startFrame}-${scene.endFrame}) and create a comprehensive scene card with deep contextual understanding.
+          content: `Analyze this video scene based on the provided frame analysis data. Focus on visual elements while using audio as supporting context.
 
-CRITICAL CONTEXT HIERARCHY:
-1. DIALOGUE (highest priority): ${audioSegment.audioType === 'dialogue' ? audioSegment.transcription : 'No dialogue detected'}
-2. ON-SCREEN TEXT (second priority): Extract ALL visible text from frame analysis
-3. MUSIC/LYRICS (lower priority): ${audioSegment.audioType === 'music' ? audioSegment.transcription : 'No music lyrics detected'}
+SCENE ANALYSIS TASK (frames ${scene.startFrame}-${scene.endFrame}, ${(scene.duration / 2).toFixed(1)} seconds):
 
-CONTEXTUAL ANALYSIS FOCUS:
-- What is the creator trying to achieve in this scene?
-- HOW do they achieve their intent? (specific techniques)
-- Why are certain visual/audio choices made?
-- What impact does this scene have on the viewer?
-- How does this scene contribute to the overall narrative/message?
-- What do dialogue and on-screen text reveal about the context?
-
-Frame-by-frame analysis (pay special attention to ON_SCREEN_TEXT fields):
+📊 FRAME ANALYSIS DATA:
 ${frameData}
 
-Audio context (Priority: ${audioSegment.priorityContext || 'Unknown'}):
-Transcription: ${audioSegment.transcription}
-Context Analysis: ${audioSegment.contextualAnalysis}
-Audio Type: ${audioSegment.audioType}
+🎵 AUDIO CONTEXT:
+- Audio Type: ${audioSegment.audioType}
+- Transcription: ${audioSegment.transcription}
+- Analysis: ${audioSegment.contextualAnalysis}
+
+ANALYSIS GUIDELINES:
+✅ Base descriptions on the frame analysis data provided
+✅ Extract visual elements like framing, lighting, mood, actions, and subjects
+✅ Use audio context to understand narrative but don't invent visual elements
+✅ If frame analysis lacks detail, note it rather than fabricating content
+✅ Focus on what's actually visible and happening in the scene
 
 Create a scene analysis card with the following structure:
 
 {
   "sceneNumber": ${sceneIndex + 1},
-  "duration": "${scene.duration}s",
-  "timeRange": "${scene.startFrame}s - ${scene.endFrame}s",
-  "title": "[Brief descriptive title]",
-  "description": "[2-3 sentence overview]",
+  "duration": "${(scene.duration / 2).toFixed(1)}s",
+  "timeRange": "${Math.round(scene.startFrame * 0.5)}s - ${Math.round(scene.endFrame * 0.5)}s",
+  "title": "[Brief descriptive title based on visual action/content]",
+  "description": "[What happens visually in this scene based on frame analysis]",
   "framing": {
     "shotTypes": ["primary shot types used"],
     "cameraMovement": "[static/pan/zoom/etc]",
@@ -1690,41 +2215,40 @@ Create a scene analysis card with the following structure:
     "atmosphere": "[calm/energetic/mysterious/etc]",
     "tone": "[serious/playful/dramatic/etc]"
   },
-  "action": {
-    "movement": "[description of movement/action]",
-    "direction": "[screen direction, eye lines]",
-    "pace": "[slow/medium/fast]"
+  "actionMovement": {
+    "movement": "[Describe movements based on frame analysis]",
+    "direction": "[Movement direction if available]",
+    "pace": "[Movement pace if available]"
   },
-  "dialogue": {
-    "hasText": true/false,
-    "textContent": "[any visible text or dialogue]",
-    "textStyle": "[overlay style, font treatment]"
+  "textDialogue": {
+    "content": "[Visible text from frame analysis]",
+    "style": "[Text style/treatment if mentioned]"
   },
   "audio": {
-    "music": "[music description]",
-    "soundDesign": "[sound effects, ambient]",
-    "dialogue": "[spoken content if any]"
+    "music": "[Based on audio analysis, not visual assumptions]",
+    "soundDesign": "[Based on audio analysis, not made up]",
+    "dialogue": "[From audio transcription only]"
   },
   "visualEffects": {
     "transitions": "[cuts/fades/wipes/etc]",
     "effects": "[filters, overlays, etc]",
-    "graphics": "[text overlays, graphics]"
+    "graphics": "[text overlays, graphics, reaction faces]"
   },
-  "setting": {
-    "location": "[where scene takes place]",
-    "environment": "[indoor/outdoor/studio/etc]",
-    "background": "[background elements]"
+  "settingEnvironment": {
+    "location": "[Location based on frame analysis]",
+    "environment": "[Environment type from frame analysis]",
+    "background": "[Background elements visible in frames]"
   },
-  "subjects": {
-    "main": "[primary subjects/people]",
-    "secondary": "[background elements]",
-    "focus": "[what draws attention]"
+  "subjectsFocus": {
+    "main": "[Main subjects from frame analysis]",
+    "secondary": "[Secondary objects from frame analysis]",
+    "focus": "[Primary focus identified in frames]"
   },
-  "contextualMeaning": {
-    "intent": "[what the creator is trying to achieve]",
-    "execution": "[HOW they achieve it - specific techniques]",
-    "impact": "[effect on viewer - emotional/narrative]",
-    "significance": "[why this scene matters to overall message]"
+  "intentImpactAnalysis": {
+    "creatorIntent": "[What the creator aims to achieve based on visual elements]",
+    "howExecuted": "[Visual techniques and methods used]",
+    "viewerImpact": "[Likely effect on viewers based on visual content]",
+    "narrativeSignificance": "[Role in overall story/message]"
   }
 }
 
@@ -1738,24 +2262,38 @@ Provide only the JSON response with no additional text.`
   });
 
   try {
+    // Handle markdown code blocks in response
+    let cleanedResponse = sceneAnalysis;
+    if (sceneAnalysis.includes('```json')) {
+      const jsonMatch = sceneAnalysis.match(/```json\s*([\s\S]*?)\s*```/);
+      if (jsonMatch) {
+        cleanedResponse = jsonMatch[1];
+      }
+    } else if (sceneAnalysis.includes('```')) {
+      const jsonMatch = sceneAnalysis.match(/```\s*([\s\S]*?)\s*```/);
+      if (jsonMatch) {
+        cleanedResponse = jsonMatch[1];
+      }
+    }
+    
     // Parse the JSON response
-    const sceneCard = JSON.parse(sceneAnalysis);
+    const sceneCard = JSON.parse(cleanedResponse);
     logWithTimestamp(`✅ Scene card ${sceneIndex + 1} generated successfully`);
     return sceneCard;
   } catch (parseError) {
     logWithTimestamp(`⚠️ Failed to parse scene card JSON for scene ${sceneIndex + 1}`, {
-      error: parseError.message
+      error: parseError.message,
+      rawResponse: sceneAnalysis.substring(0, 200) + '...'
     });
     
-    // Return a fallback structure
+    // Return a fallback structure with proper time conversion
     return {
       sceneNumber: sceneIndex + 1,
-      duration: `${scene.duration}s`,
-      timeRange: `${scene.startFrame}s - ${scene.endFrame}s`,
+      duration: `${(scene.duration / 2).toFixed(1)}s`,
+      timeRange: `${Math.round(scene.startFrame * 0.5)}s - ${Math.round(scene.endFrame * 0.5)}s`,
       title: `Scene ${sceneIndex + 1}`,
       description: "Scene analysis failed to parse",
-      error: parseError.message,
-      rawAnalysis: sceneAnalysis
+      error: parseError.message
     };
   }
 }
@@ -1817,7 +2355,7 @@ function getAudioSegmentForScene(scene, audioAnalysis) {
   };
 }
 
-async function generateContentStructure(frameAnalyses, audioAnalysis, scenes) {
+async function generateContentStructure(frameAnalyses, audioAnalysis, scenes, fps = 2) {
   const startTime = Date.now();
   logWithTimestamp('📝 Generating strategic content analysis', { 
     frameCount: frameAnalyses.length,
@@ -1827,7 +2365,7 @@ async function generateContentStructure(frameAnalyses, audioAnalysis, scenes) {
   
   try {
     // Compile comprehensive data for strategic analysis
-    const videoLength = (frameAnalyses.length / 2).toFixed(1); // 2fps = 0.5s per frame
+    const videoLength = (frameAnalyses.length / fps).toFixed(1); // fps = frames per second
     
     // Extract all on-screen text from frames
     const allFrameText = frameAnalyses.map(frame => {
@@ -1844,7 +2382,7 @@ async function generateContentStructure(frameAnalyses, audioAnalysis, scenes) {
     const sceneProgression = scenes.map((scene, index) => ({
       sceneNumber: index + 1,
       title: scene.title || `Scene ${index + 1}`,
-      timeRange: scene.timeRange || `${scene.startFrame * 0.5}s-${scene.endFrame * 0.5}s`,
+      timeRange: scene.timeRange || `${(scene.startFrame / fps).toFixed(1)}s-${(scene.endFrame / fps).toFixed(1)}s`,
       contextualMeaning: scene.contextualMeaning || {}
     }));
 
@@ -1854,7 +2392,7 @@ async function generateContentStructure(frameAnalyses, audioAnalysis, scenes) {
         messages: [
           {
             role: "user",
-            content: `Create a strategic video analysis overview in the format of a professional content strategist. Analyze this ${videoLength}-second video for its deeper meaning, viral potential, and systematic structure.
+            content: `Analyze this ${videoLength}-second video with special focus on SETUP/PAYOFF structures and hidden messaging. Explain the story like you're telling it to a 6-year-old, then analyze why it works.
 
 VIDEO DATA:
 Duration: ${videoLength} seconds
@@ -1869,29 +2407,35 @@ SCENE PROGRESSION:
 ${sceneProgression.map(scene => `Scene ${scene.sceneNumber}: ${scene.title} (${scene.timeRange})`).join('\n')}
 
 FRAME-BY-FRAME ANALYSIS:
-${frameAnalyses.slice(0, 8).map((frame, i) => `${(i * 0.5).toFixed(1)}s: ${frame.contextualMeaning || 'Context analysis available'}`).join('\n')}
+${frameAnalyses.slice(0, 8).map((frame, i) => `${(i / fps).toFixed(1)}s: ${frame.contextualMeaning || 'Context analysis available'}`).join('\n')}
 
 Create a comprehensive analysis following this structure:
 
-**VIDEO OVERVIEW**
-- Format/Genre classification
-- Primary message/theme
-- Emotional arc (start → middle → end)
-- Why this video works (3-4 key reasons)
+**SIMPLE STORY EXPLANATION**
+- Tell the complete story like explaining to a 6-year-old
+- Include all key objects, actions, and the surprise/punchline
+- Make the setup-payoff connection explicit
+- Explain what the person thought was happening vs. what was really happening
 
-**STRATEGIC BREAKDOWN**
-- Core message structure
-- Escalation pattern (if applicable)
-- Narrative techniques used
-- Visual storytelling evolution
+**SETUP/PAYOFF STRUCTURE**
+- What elements are set up early (objects found, actions taken, mood established)
+- How the ending pays off or subverts the setup
+- Any circular callbacks (ending connects back to beginning)
+- Dream/reality transitions or fantasy elements
 
-**REPLICATION INSIGHTS**
-- Template/formula identification
-- Key success elements
-- Adaptable patterns
-- Viral mechanics
+**HIDDEN MESSAGING & MISDIRECTION**
+- Visual clues that hint at the true nature of events
+- How the video makes viewers think one thing when reality is different
+- Engagement techniques that keep viewers watching through long setups
+- Use of overlaid reaction faces or engagement cues
 
-Focus on WHY this content works, not just WHAT happens. Identify the systematic approach that makes it effective and replicable. Write as if training someone to create similar content.`
+**REPLICATION FRAMEWORK**
+- Core formula: Setup → Build → Misdirect → Reveal
+- Key timing and pacing elements
+- How this structure can be adapted to other scenarios
+- What makes the payoff satisfying
+
+Focus on explaining the COMPLETE narrative arc from setup to payoff, making all hidden connections explicit and literal.`
           }
         ],
         max_tokens: 8000
@@ -1916,7 +2460,7 @@ Focus on WHY this content works, not just WHAT happens. Identify the systematic 
     });
     
     // Fallback to basic structure
-    const videoLength = (frameAnalyses.length / 2).toFixed(1);
+    const videoLength = (frameAnalyses.length / fps).toFixed(1);
     return `${videoLength}-second video with ${scenes.length} scenes. Strategic analysis failed: ${error.message}`;
   }
 }
@@ -1960,51 +2504,53 @@ function extractHook(firstFrameAnalysis) {
   return result;
 }
 
-// Extract video hooks from frame analyses and audio
+// Extract actual engagement hooks present in the video content
 async function extractVideoHooks(frameAnalyses, audioAnalysis) {
-  logWithTimestamp('🔍 Analyzing video for hooks...', {
+  logWithTimestamp('🔍 Analyzing video for actual engagement hooks...', {
     frameCount: frameAnalyses?.length || 0,
     hasAudio: !!audioAnalysis,
     hasTranscript: !!audioAnalysis?.transcription?.text
   });
   
   try {
-    const hookPrompt = `Analyze this video data to identify attention-grabbing hooks. Look for:
+    const hookPrompt = `Analyze this video content to identify the ACTUAL engagement hooks that are present in the footage. Only extract hooks that are clearly visible or audible in the content.
 
-VISUAL DISRUPTERS:
-- Camera movements (zooms, pans, tilts, shakes, whip pans, speed ramps)
-- Zoom punches (rapid zoom in/out for emphasis)
-- Speed ramps (slow motion to normal speed transitions)
-- Gimbal movements (smooth tracking/following shots)
-- Match cuts and creative transitions
-- Interesting objects or props appearing
-- Actions by talent (gestures, movements, expressions)
-- Scene changes or abrupt transitions
-- Visual effects, graphics, or overlays
-- Rack focus (focus pulling between subjects)
+IDENTIFY ACTUAL HOOKS PRESENT:
 
-QUESTIONS:
-- Direct questions to the viewer
-- Breaking the 4th wall moments
-- Rhetorical questions that engage
+VISUAL HOOKS (what you can see happening):
+- Opening shots that grab attention (close-ups, dramatic angles, movement)
+- Text overlays or graphics that appear on screen
+- Visual reveals or surprises (objects appearing, transformations)
+- Dramatic camera movements (zooms, pans, shakes)
+- Scene transitions or cuts that create impact
+- Facial expressions or reactions that hook viewers
+- Props, objects, or visual elements that create curiosity
+- Before/after reveals or transformations
 
-ACTION STATEMENTS:
-- Positive statements ("Do these 5 things if you want X")
-- Negative statements ("Avoid these if you want to get X")
-- Commands or calls to action
-- Lists or numbered points
+AUDIO HOOKS (what you can hear):
+- Opening statements or questions from speakers
+- Sound effects that grab attention
+- Music changes or dramatic audio moments
+- Dialogue that poses questions or creates intrigue
+- Statements that promise value or create curiosity
+
+TIMING HOOKS (when things happen):
+- Quick cuts or rapid scene changes
+- Pause moments or freeze frames
+- Speed changes (slow motion, time lapse)
+- Synchronized audio-visual moments
 
 TRANSCRIPT: ${audioAnalysis.transcription?.text || 'No audio transcript available'}
 
-FRAME DATA: ${frameAnalyses.slice(0, 10).map((frame, i) => `Frame ${i+1}s: ${typeof frame === 'string' ? frame : frame.analysis || JSON.stringify(frame)}`).join('\n')}
+FRAME-BY-FRAME ANALYSIS: ${frameAnalyses.slice(0, 10).map((frame, i) => `${i+1}s: ${typeof frame === 'string' ? frame : frame.analysis || JSON.stringify(frame)}`).join('\n')}
 
-Return a JSON array of hooks found, each with:
+Return ONLY the hooks that are actually present in this specific video content as a JSON array:
 {
   "timestamp": "Xs",
-  "type": "visual_disrupter|question|positive_statement|negative_statement",
-  "description": "What specifically happens",
+  "type": "visual_hook|audio_hook|timing_hook|text_overlay",
+  "description": "Exactly what hook element is present in the video",
   "impact": "high|medium|low",
-  "element": "Specific visual or audio element"
+  "element": "Specific element from the actual footage"
 }`;
 
     const response = await handleRateLimit(async () => {
@@ -2029,14 +2575,28 @@ Return a JSON array of hooks found, each with:
     
     // Try to parse JSON, fallback to empty array if parsing fails
     try {
-      const hooks = JSON.parse(hooksText);
+      // Handle markdown code blocks in response
+      let cleanedResponse = hooksText;
+      if (hooksText.includes('```json')) {
+        const jsonMatch = hooksText.match(/```json\s*([\s\S]*?)\s*```/);
+        if (jsonMatch) {
+          cleanedResponse = jsonMatch[1];
+        }
+      } else if (hooksText.includes('```')) {
+        const jsonMatch = hooksText.match(/```\s*([\s\S]*?)\s*```/);
+        if (jsonMatch) {
+          cleanedResponse = jsonMatch[1];
+        }
+      }
+      
+      const hooks = JSON.parse(cleanedResponse);
       const validHooks = Array.isArray(hooks) ? hooks : [];
       logWithTimestamp('✅ Hooks parsed successfully', { hookCount: validHooks.length });
       return validHooks;
     } catch (parseError) {
       logWithTimestamp('⚠️ Failed to parse hooks JSON, extracting manually', { 
         error: parseError.message,
-        rawResponse: hooksText?.substring(0, 500)
+        rawResponse: hooksText?.substring(0, 200) + '...'
       });
       return extractHooksFromText(hooksText);
     }
@@ -2070,7 +2630,7 @@ function extractHooksFromText(text) {
   return hooks;
 }
 
-// Categorize video into one of the 7 categories
+// Categorize video into one of the 8 specific categories
 async function categorizeVideo(frameAnalyses, audioAnalysis, scenes) {
   logWithTimestamp('🏷️ Categorizing video...', {
     frameCount: frameAnalyses?.length || 0,
@@ -2080,50 +2640,33 @@ async function categorizeVideo(frameAnalyses, audioAnalysis, scenes) {
   });
   
   try {
-    const categoryPrompt = `Analyze this video content and categorize it into ONE of these 7 categories:
+    const categoryPrompt = `Analyze this video content and categorize it into ONE of these 8 specific categories:
 
-1. DELIGHTFUL MESSAGING
-- Surprising/delightful visual or narrative twist
-- "You got me" scroll-stopping moment
-- Quick pivot to brand message
-- Emotional resonance and shareability
+HERO VIDEOS:
+1. CUSTOMER STORY
+How to identify: Features a real customer speaking directly to camera, telling their personal journey. You'll hear phrases like "before working with..." and "my biggest challenge was..." The customer is the main speaker, not the company.
 
-2. ENGAGING EDUCATION  
-- 2-4 clear educational points
-- Mini-disrupters with each point
-- Energetic pacing
-- Authoritative educator positioning
+2. CASE STUDY
+How to identify: Shows technical work in action with expert commentary. Features data, measurements, or technical processes. You'll see "before and after" results, hear technical jargon, and see the company's team explaining their methodology.
 
-3. DYNAMIC B-ROLL
-- Visually striking footage
-- Creative transitions (match cuts, speed ramps)
-- Hyperlapses, gimbal moves, camera motion
-- Close-ups on textures and movement
+REEL FRAMEWORKS:
+3. COMEDIC MESSAGING
+How to identify: Sets up what looks like one scenario, then delivers an unexpected plot twist with ironic or comedic timing. The punchline reveals a brand message you weren't expecting. Makes you laugh or think "I didn't see that coming."
 
-4. SITUATIONAL CREATIVE
-- Unexpected, relatable context
-- Pop-culture analogies or skits
-- Subverted expectations
-- Brand personality showcase
+4. ENGAGING EDUCATION
+How to identify: Fast-paced educational content delivering clear, value-driven tips. Features quick scene changes, split screens, or rapid transitions between educational points. Feels like a mini-tutorial with energetic pacing.
 
-5. NARRATED NARRATIVE
-- Fly-on-the-wall style
-- Wide/static shots with voice-over
-- Internal monologue style
-- Intimate and authentic feel
+5. DYNAMIC B-ROLL
+How to identify: Heavy focus on visually striking footage of work/products in action. Lots of smooth camera movements, close-ups on textures, creative transitions, and high production value shots. Minimal talking, maximum visual impact.
 
-6. BTS INTERVIEW
-- Candid, in-action insights
-- Interview while working
-- Raw and authentic feel
-- Trust-building content
+6. SITUATIONAL CREATIVE
+How to identify: Places the service or product in relatable, everyday situations using playful analogies. Often compares the brand's work to familiar experiences through skits or creative storytelling that makes the service more approachable.
 
-7. TUTORIAL
-- Step-by-step instructional content
-- Process demonstration and explanation
-- "How to" or "Follow along" format
-- Clear sequential steps with visual demonstration
-- Educational but focused on practical skills/techniques
+7. NARRATED NARRATIVE
+How to identify: Features internal monologue or diary-style voice-over with simple, static camera work. Feels like you're listening to someone's thoughts while watching their day unfold.
+
+8. BTS (BEHIND-THE-SCENES) INTERVIEW
+How to identify: Shows someone working while answering questions. The interview happens during the actual work process, creating a candid, unpolished feel. Often features simple questions about common mistakes or insights.
 
 TRANSCRIPT: ${audioAnalysis.transcription?.text || 'No audio transcript available'}
 
@@ -2131,12 +2674,13 @@ SCENES: ${scenes.map(scene => `Scene ${scene.sceneNumber}: ${scene.description}`
 
 VISUAL ELEMENTS: ${frameAnalyses.slice(0, 5).map((frame, i) => `${i+1}s: ${typeof frame === 'string' ? frame.substring(0, 200) : (frame.analysis || JSON.stringify(frame)).substring(0, 200)}`).join('\n')}
 
-Return JSON with:
+Analyze the content carefully and return JSON with:
 {
-  "category": "delightful_messaging|engaging_education|dynamic_broll|situational_creative|narrated_narrative|bts_interview|tutorial",
+  "category": "customer_story|case_study|comedic_messaging|engaging_education|dynamic_broll|situational_creative|narrated_narrative|bts_interview",
   "confidence": 0.0-1.0,
-  "reasoning": "Why this category fits",
-  "keyIndicators": ["indicator1", "indicator2", "indicator3"]
+  "reasoning": "Why this specific category fits based on the identification criteria",
+  "keyIndicators": ["specific_indicator1", "specific_indicator2", "specific_indicator3"],
+  "subcategory": "hero_video|reel_framework"
 }`;
 
     const response = await handleRateLimit(async () => {
@@ -2160,19 +2704,34 @@ Return JSON with:
     });
     
     try {
-      const parsed = JSON.parse(categoryText);
+      // Handle markdown code blocks in response
+      let cleanedResponse = categoryText;
+      if (categoryText.includes('```json')) {
+        const jsonMatch = categoryText.match(/```json\s*([\s\S]*?)\s*```/);
+        if (jsonMatch) {
+          cleanedResponse = jsonMatch[1];
+        }
+      } else if (categoryText.includes('```')) {
+        const jsonMatch = categoryText.match(/```\s*([\s\S]*?)\s*```/);
+        if (jsonMatch) {
+          cleanedResponse = jsonMatch[1];
+        }
+      }
+      
+      const parsed = JSON.parse(cleanedResponse);
       logWithTimestamp('✅ Category parsed successfully', { category: parsed.category, confidence: parsed.confidence });
       return parsed;
     } catch (parseError) {
       logWithTimestamp('⚠️ Failed to parse category JSON, using fallback', { 
         error: parseError.message,
-        rawResponse: categoryText 
+        rawResponse: categoryText.substring(0, 200) + '...'
       });
       return {
         category: 'dynamic_broll',
         confidence: 0.5,
         reasoning: 'Unable to parse AI response, defaulting to dynamic b-roll',
-        keyIndicators: ['Visual content detected']
+        keyIndicators: ['Visual content detected'],
+        subcategory: 'reel_framework'
       };
     }
     
@@ -2185,7 +2744,8 @@ Return JSON with:
       category: 'dynamic_broll',
       confidence: 0.0,
       reasoning: `Error during categorization: ${error.message}`,
-      keyIndicators: ['Analysis failed']
+      keyIndicators: ['Analysis failed'],
+      subcategory: 'reel_framework'
     };
   }
 }
@@ -2315,7 +2875,21 @@ Return detailed JSON analysis:
     });
     
     try {
-      const parsed = JSON.parse(contextText);
+      // Handle markdown code blocks in response
+      let cleanedResponse = contextText;
+      if (contextText.includes('```json')) {
+        const jsonMatch = contextText.match(/```json\s*([\s\S]*?)\s*```/);
+        if (jsonMatch) {
+          cleanedResponse = jsonMatch[1];
+        }
+      } else if (contextText.includes('```')) {
+        const jsonMatch = contextText.match(/```\s*([\s\S]*?)\s*```/);
+        if (jsonMatch) {
+          cleanedResponse = jsonMatch[1];
+        }
+      }
+      
+      const parsed = JSON.parse(cleanedResponse);
       logWithTimestamp('✅ Context analysis parsed successfully', { 
         narrative: parsed.mainNarrative?.substring(0, 100),
         themeCount: parsed.themes?.length || 0,
@@ -2326,7 +2900,7 @@ Return detailed JSON analysis:
     } catch (parseError) {
       logWithTimestamp('⚠️ Failed to parse context JSON, using fallback', { 
         error: parseError.message,
-        rawResponse: contextText?.substring(0, 500)
+        rawResponse: contextText?.substring(0, 200) + '...'
       });
       return extractContextFromText(contextText);
     }
@@ -2466,11 +3040,26 @@ export async function POST(request) {
     // Parse request body
     logWithTimestamp('📥 Parsing request body', { requestId });
     requestBody = await request.json();
-    const { url } = requestBody;
+    const { url, userId, estimatedCredits, analysisMode = 'standard' } = requestBody;
+    
+    // Calculate credits based on analysis mode
+    const creditMultipliers = {
+      'fine': 2.0,     // 4fps - double cost
+      'standard': 1.0, // 2fps - base cost
+      'broad': 0.5     // 1fps - half cost
+    };
+    
+    const baseCost = estimatedCredits || 4;
+    const adjustedCredits = Math.ceil(baseCost * (creditMultipliers[analysisMode] || 1.0));
     
     logWithTimestamp('📋 Request details', { 
       requestId,
       url,
+      userId: userId || 'anonymous',
+      analysisMode,
+      estimatedCredits: estimatedCredits || 'not provided',
+      adjustedCredits,
+      creditMultiplier: creditMultipliers[analysisMode] || 1.0,
       userAgent: request.headers.get('user-agent'),
       origin: request.headers.get('origin')
     });
@@ -2622,7 +3211,83 @@ export async function POST(request) {
     videoPath = await downloadVideo(url);
     logWithTimestamp('✅ Video download completed', { requestId, videoPath });
     
-    const analysis = await analyzeVideo(videoPath);
+    // Initialize credits deduction value
+    let creditsToDeduct = adjustedCredits;
+
+    // Temporary bypass for development - remove this in production
+    const bypassCredits = process.env.BYPASS_CREDIT_CHECK === 'true';
+    if (bypassCredits) {
+      logWithTimestamp('⚠️ Credit check bypassed for development', { userId, creditsToDeduct });
+    }
+
+    // If Supabase and userId provided, ensure sufficient balance before analysis
+    if (userId && isSupabaseAvailable() && !bypassCredits) {
+      try {
+        let profile = await getUserProfile(userId);
+        if (!profile) {
+          // Auto-create user profile with default starting credits
+          const DEFAULT_INITIAL_CREDITS = 10;
+          try {
+            const { data: newProfile, error: insertErr } = await supabase
+              .from('user_profiles')
+              .insert({ 
+                id: userId, 
+                credits_balance: DEFAULT_INITIAL_CREDITS,
+                created_at: new Date().toISOString(),
+                updated_at: new Date().toISOString()
+              })
+              .select()
+              .single();
+              
+            if (insertErr) {
+              logWithTimestamp('⚠️ Failed to auto-create profile', { error: insertErr.message });
+              // Try alternative approach - maybe the user exists but with different field names
+              const { data: existingProfile, error: selectErr } = await supabase
+                .from('user_profiles')
+                .select('*')
+                .eq('id', userId)
+                .maybeSingle();
+                
+              if (existingProfile) {
+                profile = existingProfile;
+                logWithTimestamp('✅ Found existing profile with alternative query', { profile });
+              } else {
+                // Gracefully allow analysis without credits deduction for now
+                logWithTimestamp('⚠️ Proceeding without credit validation due to profile creation issues');
+                profile = { credits_balance: 99999 }; // Allow analysis to proceed
+              }
+            } else {
+              profile = newProfile;
+              logWithTimestamp('✅ Created new user profile', { userId, initialCredits: DEFAULT_INITIAL_CREDITS });
+            }
+          } catch (createErr) {
+            logWithTimestamp('⚠️ Profile creation failed, proceeding without credit validation', { error: createErr.message });
+            profile = { credits_balance: 99999 }; // Allow analysis to proceed
+          }
+        }
+        
+        const balance = profile.credits_balance ?? profile.credits ?? 0;
+        if (creditsToDeduct && balance < creditsToDeduct) {
+          return NextResponse.json({ 
+            error: 'Insufficient credits',
+            required: creditsToDeduct,
+            available: balance,
+            analysisMode: analysisMode
+          }, { status: 402 });
+        }
+        logWithTimestamp('✅ Credit validation passed', { 
+          userId, 
+          available: balance, 
+          required: creditsToDeduct,
+          analysisMode
+        });
+      } catch (supabaseErr) {
+        logWithTimestamp('⚠️ Supabase check failed, proceeding without credit validation', { error: supabaseErr.message });
+        // Allow analysis to proceed without credit validation
+      }
+    }
+    
+    const analysis = await analyzeVideo(videoPath, userId, creditsToDeduct, requestId, analysisMode);
     logWithTimestamp('✅ Video analysis completed', { requestId });
     
     // Final cleanup
@@ -2632,7 +3297,8 @@ export async function POST(request) {
     logWithTimestamp('🎉 Request completed successfully!', { 
       requestId,
       totalDuration: `${totalDuration}ms`,
-      analysisKeys: Object.keys(analysis)
+      analysisKeys: Object.keys(analysis),
+      creditsDeducted: creditsToDeduct || null
     });
     
     return NextResponse.json({

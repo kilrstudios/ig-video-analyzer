@@ -452,4 +452,50 @@ body {
   }
 }
 
+/* Strategic Analysis Styling */
+.strategic-analysis-content {
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  line-height: 1.7;
+  color: #374151;
+}
 
+.strategic-analysis-content h2 {
+  position: relative;
+  padding-left: 1rem;
+}
+
+.strategic-analysis-content h2::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 4px;
+  height: 100%;
+  background: linear-gradient(to bottom, #3b82f6, #8b5cf6);
+  border-radius: 2px;
+}
+
+.strategic-analysis-content .section-card {
+  position: relative;
+  overflow: hidden;
+}
+
+.strategic-analysis-content .section-card::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: linear-gradient(to right, transparent, rgba(59, 130, 246, 0.3), transparent);
+}
+
+.strategic-analysis-content strong {
+  color: #1f2937;
+  font-weight: 600;
+}
+
+.strategic-analysis-content p {
+  margin-bottom: 1rem;
+}

@@ -5,10 +5,15 @@ const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
 
 // Create a function to get the Supabase client
 const getSupabaseClient = () => {
+  console.log('Supabase URL available:', !!supabaseUrl)
+  console.log('Supabase Anon Key available:', !!supabaseAnonKey)
+  
   if (!supabaseUrl || !supabaseAnonKey) {
     console.warn('Supabase environment variables not found. Some features may not work.')
     return null
   }
+  
+  console.log('Creating Supabase client...')
   return createClient(supabaseUrl, supabaseAnonKey)
 }
 
@@ -21,21 +26,48 @@ export const isSupabaseAvailable = () => {
 
 // Helper function to get the current user's profile
 export const getUserProfile = async (userId) => {
+  console.log('getUserProfile called with userId:', userId)
+  console.log('Supabase client available:', !!supabase)
+  
   if (!supabase) {
+    console.error('Supabase client not initialized!')
     throw new Error('Supabase client not initialized. Please check your environment variables.')
   }
   
-  const { data, error } = await supabase
-    .from('user_profiles')
-    .select('*')
-    .eq('id', userId)
-    .single()
+  console.log('Querying user_profiles table...')
   
-  if (error && error.code !== 'PGRST116') {
-    throw error
+  try {
+    // Try with 'id' field first
+    let { data, error } = await supabase
+      .from('user_profiles')
+      .select('*')
+      .eq('id', userId)
+      .maybeSingle()
+    
+    // If not found, try with 'user_id' field
+    if (!data && !error) {
+      console.log('Trying with user_id field...')
+      const result = await supabase
+        .from('user_profiles')
+        .select('*')
+        .eq('user_id', userId)
+        .maybeSingle()
+      data = result.data
+      error = result.error
+    }
+    
+    console.log('getUserProfile result:', { data, error })
+    
+    if (error && error.code !== 'PGRST116') {
+      console.error('getUserProfile error:', error)
+      throw error
+    }
+    
+    return data
+  } catch (err) {
+    console.error('getUserProfile caught error:', err)
+    throw err
   }
-  
-  return data
 }
 
 // Helper function to update user's credit balance

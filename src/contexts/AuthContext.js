@@ -47,11 +47,18 @@ export const AuthProvider = ({ children }) => {
     // Listen for auth changes
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       async (event, session) => {
+        console.log('Auth state change:', event, session?.user?.email)
         try {
           if (session?.user) {
+            console.log('Setting user from auth state change:', session.user.email)
             setUser(session.user)
-            await loadUserProfile(session.user.id)
+            // Load profile in background, don't block UI
+            loadUserProfile(session.user.id).catch(err => {
+              console.error('Profile loading failed, using default:', err)
+              setProfile({ id: session.user.id, credits_balance: 100 })
+            })
           } else {
+            console.log('Clearing user from auth state change')
             setUser(null)
             setProfile(null)
           }
@@ -67,10 +74,41 @@ export const AuthProvider = ({ children }) => {
 
   const loadUserProfile = async (userId) => {
     try {
-      const profileData = await getUserProfile(userId)
+      console.log('Loading user profile for:', userId)
+      
+      // Add timeout to prevent hanging
+      const profilePromise = getUserProfile(userId)
+      const timeoutPromise = new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('Profile loading timeout')), 5000)
+      )
+      
+      let profileData = await Promise.race([profilePromise, timeoutPromise])
+      console.log('Profile data from getUserProfile:', profileData)
+      
+      if (!profileData) {
+        console.log('No profile found, creating new profile with 100 credits')
+        // Auto-create profile with starter credits if not found
+        const { data: newProfile, error: insertErr } = await supabase
+          .from('user_profiles')
+          .insert({ id: userId, credits_balance: 100 })
+          .select()
+          .single()
+        if (insertErr) {
+          console.error('Failed to auto-create profile', insertErr)
+          // Set a default profile if creation fails
+          profileData = { id: userId, credits_balance: 100 }
+        } else {
+          console.log('Created new profile:', newProfile)
+          profileData = newProfile
+        }
+      }
+      
+      console.log('Setting profile:', profileData)
       setProfile(profileData)
     } catch (error) {
       console.error('Error loading user profile:', error)
+      // Set a default profile if everything fails
+      setProfile({ id: userId, credits_balance: 100 })
     }
   }
 
@@ -79,10 +117,22 @@ export const AuthProvider = ({ children }) => {
       return { error: 'Supabase not configured' }
     }
     
+    console.log('Attempting sign in with:', email)
     const { data, error } = await supabase.auth.signInWithPassword({
       email,
       password,
     })
+    
+    console.log('Sign in response:', { data, error })
+    
+    if (data?.user) {
+      console.log('User signed in successfully:', data.user.email)
+    }
+    
+    if (error) {
+      console.log('Sign in error:', error)
+    }
+    
     return { data, error }
   }
 

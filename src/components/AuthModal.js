@@ -22,10 +22,15 @@ export default function AuthModal({ isOpen, onClose, defaultTab = 'signin' }) {
 
     try {
       if (activeTab === 'signin') {
-        const { error } = await signIn(email, password)
+        console.log('AuthModal: Attempting sign in')
+        const { data, error } = await signIn(email, password)
+        console.log('AuthModal: Sign in result:', { data, error })
         if (error) {
+          console.log('AuthModal: Sign in error:', error.message)
           setError(error.message)
         } else {
+          console.log('AuthModal: Sign in successful, closing modal immediately')
+          // Close modal immediately, don't wait for profile loading
           onClose()
         }
       } else {

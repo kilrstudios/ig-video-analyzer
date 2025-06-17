@@ -197,11 +197,11 @@ interface VideoAnalysis {
 
 interface VideoAnalysisProps {
   results: VideoAnalysis;
-  onDownloadPdf: () => Promise<void>;
-  isGeneratingPdf: boolean;
+  onCopyMarkdown: () => Promise<void>;
+  isCopying: boolean;
 }
 
-export default function VideoAnalysis({ results, onDownloadPdf, isGeneratingPdf }: VideoAnalysisProps) {
+export default function VideoAnalysis({ results, onCopyMarkdown, isCopying }: VideoAnalysisProps) {
   const [selectedScene, setSelectedScene] = useState<Scene | null>(null);
   const [activeTab, setActiveTab] = useState<'overview' | 'scenes' | 'hooks' | 'transcript'>('overview');
 
@@ -212,24 +212,24 @@ export default function VideoAnalysis({ results, onDownloadPdf, isGeneratingPdf 
         <div className="flex justify-between items-center mb-6">
           <h2 className="text-2xl font-semibold">📊 Video Analysis Overview</h2>
           <button
-            onClick={onDownloadPdf}
-            disabled={isGeneratingPdf}
+            onClick={onCopyMarkdown}
+            disabled={isCopying}
             className="px-6 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 transition-colors"
           >
-            {isGeneratingPdf ? (
+            {isCopying ? (
               <>
                 <svg className="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
                   <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 714 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
                 </svg>
-                Generating PDF...
+                Copying Rich Text...
               </>
             ) : (
               <>
                 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-4 h-4">
                   <path fillRule="evenodd" d="M5.625 1.5H9a3.75 3.75 0 013.75 3.75v1.875c0 1.036.84 1.875 1.875 1.875H16.5a3.75 3.75 0 013.75 3.75v7.875c0 1.035-.84 1.875-1.875 1.875H5.625a1.875 1.875 0 01-1.875-1.875V3.375c0-1.036.84-1.875 1.875-1.875zm6 16.5c.66 0 1.2-.54 1.2-1.2V9.375a.6.6 0 00-.6-.6H9.375A.6.6 0 009 9.375v7.875c0 .66.54 1.2 1.2 1.2h1.425z" clipRule="evenodd" />
                 </svg>
-                Download PDF Report
+                Copy Rich Text
               </>
             )}
           </button>
@@ -277,17 +277,171 @@ export default function VideoAnalysis({ results, onDownloadPdf, isGeneratingPdf 
             {/* Strategic Overview */}
             {results.strategicOverview && (
               <div>
-                <h3 className="font-semibold text-gray-900 mb-3">Strategic Analysis</h3>
+                <h3 className="font-semibold text-gray-900 mb-4 flex items-center">
+                  <svg className="w-5 h-5 mr-2 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+                  </svg>
+                  Strategic Analysis
+                </h3>
                 {typeof results.strategicOverview === 'string' ? (
-                  <div className="prose prose-sm max-w-none text-gray-700 whitespace-pre-wrap">
-                    {results.strategicOverview}
+                  <div className="strategic-analysis-content">
+                    {(() => {
+                      const lines = results.strategicOverview.split('\n');
+                      const sections: JSX.Element[] = [];
+                      
+                      interface SectionData {
+                        title: string;
+                        content: string[];
+                        bgColor: string;
+                        textColor: string;
+                        borderColor: string;
+                      }
+                      
+                      let currentSection: SectionData | null = null;
+                      let mainHeading: string | null = null;
+
+                      lines.forEach((line, index) => {
+                        // Handle main headings (##)
+                        if (line.startsWith('## ')) {
+                          // Close previous section if exists
+                          if (currentSection) {
+                            sections.push(
+                              <div key={`section-${sections.length}`} className={`${currentSection.bgColor} rounded-lg p-4 mt-6 mb-4 border-l-4 ${currentSection.borderColor} section-card`}>
+                                <h3 className={`font-semibold ${currentSection.textColor} mb-3 text-lg`}>
+                                  {currentSection.title}
+                                </h3>
+                                <div className="section-content">
+                                  {currentSection.content.map((contentLine, contentIndex) => (
+                                    <div key={contentIndex} dangerouslySetInnerHTML={{ __html: contentLine }} />
+                                  ))}
+                                </div>
+                              </div>
+                            );
+                            currentSection = null;
+                          }
+
+                          mainHeading = line.replace('## ', '');
+                          sections.push(
+                            <h2 key={`heading-${index}`} className="text-xl font-bold text-gray-900 mt-8 mb-4 pb-2 border-b-2 border-blue-200 flex items-center">
+                              <span className="bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
+                                {mainHeading}
+                              </span>
+                            </h2>
+                          );
+                          return;
+                        }
+                        
+                        // Handle sub-headings (###)
+                        if (line.startsWith('### ')) {
+                          // Close previous section if exists
+                          if (currentSection) {
+                            sections.push(
+                              <div key={`section-${sections.length}`} className={`${currentSection.bgColor} rounded-lg p-4 mt-6 mb-4 border-l-4 ${currentSection.borderColor} section-card`}>
+                                <h3 className={`font-semibold ${currentSection.textColor} mb-3 text-lg`}>
+                                  {currentSection.title}
+                                </h3>
+                                <div className="section-content">
+                                  {currentSection.content.map((contentLine, contentIndex) => (
+                                    <div key={contentIndex} dangerouslySetInnerHTML={{ __html: contentLine }} />
+                                  ))}
+                                </div>
+                              </div>
+                            );
+                          }
+
+                          const title = line.replace('### ', '');
+                          let bgColor = 'bg-blue-50';
+                          let textColor = 'text-blue-900';
+                          let borderColor = 'border-l-blue-500';
+                          
+                          // Color code different sections
+                          if (title.includes('Why It Works')) {
+                            bgColor = 'bg-green-50';
+                            textColor = 'text-green-900';
+                            borderColor = 'border-l-green-500';
+                          } else if (title.includes('Success Formula')) {
+                            bgColor = 'bg-purple-50';
+                            textColor = 'text-purple-900';
+                            borderColor = 'border-l-purple-500';
+                          } else if (title.includes('Universal Principles')) {
+                            bgColor = 'bg-orange-50';
+                            textColor = 'text-orange-900';
+                            borderColor = 'border-l-orange-500';
+                          } else if (title.includes('Technical Requirements')) {
+                            bgColor = 'bg-gray-50';
+                            textColor = 'text-gray-900';
+                            borderColor = 'border-l-gray-500';
+                          } else if (title.includes('Implementation')) {
+                            bgColor = 'bg-indigo-50';
+                            textColor = 'text-indigo-900';
+                            borderColor = 'border-l-indigo-500';
+                          } else if (title.includes('Adaptability')) {
+                            bgColor = 'bg-pink-50';
+                            textColor = 'text-pink-900';
+                            borderColor = 'border-l-pink-500';
+                          } else if (title.includes('Resource')) {
+                            bgColor = 'bg-yellow-50';
+                            textColor = 'text-yellow-900';
+                            borderColor = 'border-l-yellow-500';
+                          }
+                          
+                          currentSection = { title, content: [], bgColor, textColor, borderColor };
+                          return;
+                        }
+                        
+                        // Add content to current section
+                        if (currentSection && line.trim()) {
+                          let formattedLine = line;
+                          
+                          // Handle bullet points
+                          if (line.trim().startsWith('- ')) {
+                            formattedLine = `<div class="ml-4 mb-2 flex items-start"><span class="inline-block w-2 h-2 bg-blue-500 rounded-full mt-2 mr-3 flex-shrink-0"></span><span class="text-gray-700 leading-relaxed">${line.replace('- ', '')}</span></div>`;
+                          }
+                          // Handle numbered lists
+                          else if (line.trim().match(/^\d+\./)) {
+                            const number = line.trim().match(/^(\d+)/)?.[1];
+                            formattedLine = `<div class="ml-4 mb-2 flex items-start"><span class="inline-flex items-center justify-center w-6 h-6 bg-blue-500 text-white text-xs font-bold rounded-full mr-3 flex-shrink-0 mt-0.5">${number}</span><span class="text-gray-700 leading-relaxed">${line.replace(/^\d+\.\s*/, '')}</span></div>`;
+                          }
+                          // Handle bold text (**text**)
+                          else if (line.includes('**')) {
+                            formattedLine = `<p class="text-gray-700 leading-relaxed mb-3">${line.replace(/\*\*(.*?)\*\*/g, '<strong class="font-semibold text-gray-900">$1</strong>')}</p>`;
+                          }
+                          // Handle regular paragraphs
+                          else {
+                            formattedLine = `<p class="text-gray-700 leading-relaxed mb-3">${line}</p>`;
+                          }
+                          
+                          currentSection.content.push(formattedLine);
+                        }
+                      });
+
+                      // Close final section if exists
+                      if (currentSection) {
+                        sections.push(
+                          <div key={`section-${sections.length}`} className={`${currentSection.bgColor} rounded-lg p-4 mt-6 mb-4 border-l-4 ${currentSection.borderColor} section-card`}>
+                            <h3 className={`font-semibold ${currentSection.textColor} mb-3 text-lg`}>
+                              {currentSection.title}
+                            </h3>
+                            <div className="section-content">
+                              {currentSection.content.map((contentLine: string, contentIndex: number) => (
+                                <div key={contentIndex} dangerouslySetInnerHTML={{ __html: contentLine }} />
+                              ))}
+                            </div>
+                          </div>
+                        );
+                      }
+
+                      return sections;
+                    })()}
                   </div>
                 ) : (
                   <div className="space-y-4">
+                    {results.strategicOverview.videoOverview && (
                     <div className="bg-blue-50 rounded-lg p-4">
                       <h4 className="font-semibold text-blue-900 mb-2">Video Overview</h4>
                       <p className="text-blue-800">{results.strategicOverview.videoOverview}</p>
                     </div>
+                    )}
                     
                     {results.strategicOverview.narrativeArc && (
                       <div className="bg-teal-50 rounded-lg p-4">
@@ -295,7 +449,7 @@ export default function VideoAnalysis({ results, onDownloadPdf, isGeneratingPdf 
                         <div className="space-y-3">
                           <div>
                             <span className="inline-block px-2 py-1 bg-teal-100 text-teal-800 rounded text-sm font-medium mb-2">
-                              {results.strategicOverview.narrativeArc.arcType.toUpperCase()} STRUCTURE
+                              {results.strategicOverview.narrativeArc.arcType?.toUpperCase()} STRUCTURE
                             </span>
                           </div>
                           <div>
@@ -310,29 +464,39 @@ export default function VideoAnalysis({ results, onDownloadPdf, isGeneratingPdf 
                       </div>
                     )}
                     
+                    {results.strategicOverview.whyItWorks && (
                     <div className="bg-green-50 rounded-lg p-4">
                       <h4 className="font-semibold text-green-900 mb-2">Why It Works</h4>
                       <p className="text-green-800">{results.strategicOverview.whyItWorks}</p>
                     </div>
+                    )}
                     
+                    {results.strategicOverview.successFormula && (
                     <div className="bg-purple-50 rounded-lg p-4">
                       <h4 className="font-semibold text-purple-900 mb-2">Success Formula</h4>
                       <p className="text-purple-800">{results.strategicOverview.successFormula}</p>
                     </div>
+                    )}
                     
+                    {results.strategicOverview.universalPrinciples && (
                     <div className="bg-orange-50 rounded-lg p-4">
                       <h4 className="font-semibold text-orange-900 mb-2">Universal Principles</h4>
                       <p className="text-orange-800">{results.strategicOverview.universalPrinciples}</p>
                     </div>
+                    )}
                     
+                    {results.strategicOverview.technicalRequirements && (
                     <div className="bg-gray-50 rounded-lg p-4">
                       <h4 className="font-semibold text-gray-900 mb-2">Technical Requirements</h4>
                       <p className="text-gray-800">{results.strategicOverview.technicalRequirements}</p>
                     </div>
+                    )}
                     
                     <div className="bg-indigo-50 rounded-lg p-4">
                       <h4 className="font-semibold text-indigo-900 mb-2">🎬 Implementation Framework</h4>
                       <div className="space-y-3">
+                        {results.strategicOverview.implementationFramework ? (
+                          <>
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                           <div className="bg-indigo-100 rounded-lg p-3">
                             <h5 className="font-medium text-indigo-900 mb-1 text-sm">📋 Pre-Production</h5>
@@ -353,18 +517,28 @@ export default function VideoAnalysis({ results, onDownloadPdf, isGeneratingPdf 
                             <p className="text-indigo-800 text-xs">{results.strategicOverview.implementationFramework.successMetrics}</p>
                           </div>
                         </div>
+                          </>
+                        ) : (
+                          <div className="bg-gray-100 rounded-lg p-4">
+                            <p className="text-gray-600 text-sm">Implementation framework details are being generated...</p>
+                          </div>
+                        )}
                       </div>
                     </div>
                     
+                    {results.strategicOverview.adaptabilityGuidelines && (
                     <div className="bg-pink-50 rounded-lg p-4">
                       <h4 className="font-semibold text-pink-900 mb-2">Adaptability Guidelines</h4>
                       <p className="text-pink-800">{results.strategicOverview.adaptabilityGuidelines}</p>
                     </div>
+                    )}
                     
+                    {results.strategicOverview.viralPotential && (
                     <div className="bg-red-50 rounded-lg p-4">
                       <h4 className="font-semibold text-red-900 mb-2">Viral Potential</h4>
                       <p className="text-red-800">{results.strategicOverview.viralPotential}</p>
                     </div>
+                    )}
                     
                     {results.strategicOverview.resourceScaling && (
                       <div className="bg-yellow-50 rounded-lg p-4">
@@ -427,9 +601,9 @@ export default function VideoAnalysis({ results, onDownloadPdf, isGeneratingPdf 
                     <div className="bg-blue-50 rounded-lg p-3">
                       <h6 className="font-semibold text-blue-900 mb-2 text-sm">📹 Framing & Composition</h6>
                       <div className="space-y-1 text-xs">
-                        <div><strong>Shot Types:</strong> {scene.framing.shotTypes.join(', ')}</div>
-                        <div><strong>Camera Movement:</strong> {scene.framing.cameraMovement}</div>
-                        <div><strong>Composition:</strong> {scene.framing.composition}</div>
+                        <div><strong>Shot Types:</strong> {scene.framing?.shotTypes?.join(', ') || 'N/A'}</div>
+                        <div><strong>Camera Movement:</strong> {scene.framing?.cameraMovement || 'N/A'}</div>
+                        <div><strong>Composition:</strong> {scene.framing?.composition || 'N/A'}</div>
                       </div>
                     </div>
 
@@ -437,10 +611,10 @@ export default function VideoAnalysis({ results, onDownloadPdf, isGeneratingPdf 
                     <div className="bg-yellow-50 rounded-lg p-3">
                       <h6 className="font-semibold text-yellow-900 mb-2 text-sm">💡 Lighting</h6>
                       <div className="space-y-1 text-xs">
-                        <div><strong>Style:</strong> {scene.lighting.style}</div>
-                        <div><strong>Mood:</strong> {scene.lighting.mood}</div>
-                        <div><strong>Direction:</strong> {scene.lighting.direction}</div>
-                        <div><strong>Quality:</strong> {scene.lighting.quality}</div>
+                        <div><strong>Style:</strong> {scene.lighting?.style || 'N/A'}</div>
+                        <div><strong>Mood:</strong> {scene.lighting?.mood || 'N/A'}</div>
+                        <div><strong>Direction:</strong> {scene.lighting?.direction || 'N/A'}</div>
+                        <div><strong>Quality:</strong> {scene.lighting?.quality || 'N/A'}</div>
                       </div>
                     </div>
 
@@ -448,9 +622,9 @@ export default function VideoAnalysis({ results, onDownloadPdf, isGeneratingPdf 
                     <div className="bg-purple-50 rounded-lg p-3">
                       <h6 className="font-semibold text-purple-900 mb-2 text-sm">🎭 Mood & Atmosphere</h6>
                       <div className="space-y-1 text-xs">
-                        <div><strong>Emotional:</strong> {scene.mood.emotional}</div>
-                        <div><strong>Atmosphere:</strong> {scene.mood.atmosphere}</div>
-                        <div><strong>Tone:</strong> {scene.mood.tone}</div>
+                        <div><strong>Emotional:</strong> {scene.mood?.emotional || 'N/A'}</div>
+                        <div><strong>Atmosphere:</strong> {scene.mood?.atmosphere || 'N/A'}</div>
+                        <div><strong>Tone:</strong> {scene.mood?.tone || 'N/A'}</div>
                       </div>
                     </div>
 
@@ -458,9 +632,9 @@ export default function VideoAnalysis({ results, onDownloadPdf, isGeneratingPdf 
                     <div className="bg-green-50 rounded-lg p-3">
                       <h6 className="font-semibold text-green-900 mb-2 text-sm">🎬 Action & Movement</h6>
                       <div className="space-y-1 text-xs">
-                        <div><strong>Movement:</strong> {scene.actionMovement.movement}</div>
-                        <div><strong>Direction:</strong> {scene.actionMovement.direction}</div>
-                        <div><strong>Pace:</strong> {scene.actionMovement.pace}</div>
+                        <div><strong>Movement:</strong> {scene.actionMovement?.movement || 'N/A'}</div>
+                        <div><strong>Direction:</strong> {scene.actionMovement?.direction || 'N/A'}</div>
+                        <div><strong>Pace:</strong> {scene.actionMovement?.pace || 'N/A'}</div>
                       </div>
                     </div>
 
@@ -468,9 +642,9 @@ export default function VideoAnalysis({ results, onDownloadPdf, isGeneratingPdf 
                     <div className="bg-red-50 rounded-lg p-3">
                       <h6 className="font-semibold text-red-900 mb-2 text-sm">🎵 Audio</h6>
                       <div className="space-y-1 text-xs">
-                        <div><strong>Music:</strong> {scene.audio.music}</div>
-                        <div><strong>Sound Design:</strong> {scene.audio.soundDesign}</div>
-                        <div><strong>Dialogue:</strong> {scene.audio.dialogue}</div>
+                        <div><strong>Music:</strong> {scene.audio?.music || 'N/A'}</div>
+                        <div><strong>Sound Design:</strong> {scene.audio?.soundDesign || 'N/A'}</div>
+                        <div><strong>Dialogue:</strong> {scene.audio?.dialogue || 'N/A'}</div>
                       </div>
                     </div>
 
@@ -478,9 +652,9 @@ export default function VideoAnalysis({ results, onDownloadPdf, isGeneratingPdf 
                     <div className="bg-indigo-50 rounded-lg p-3">
                       <h6 className="font-semibold text-indigo-900 mb-2 text-sm">✨ Visual Effects</h6>
                       <div className="space-y-1 text-xs">
-                        <div><strong>Transitions:</strong> {scene.visualEffects.transitions}</div>
-                        <div><strong>Effects:</strong> {scene.visualEffects.effects}</div>
-                        <div><strong>Graphics:</strong> {scene.visualEffects.graphics}</div>
+                        <div><strong>Transitions:</strong> {scene.visualEffects?.transitions || 'N/A'}</div>
+                        <div><strong>Effects:</strong> {scene.visualEffects?.effects || 'N/A'}</div>
+                        <div><strong>Graphics:</strong> {scene.visualEffects?.graphics || 'N/A'}</div>
                       </div>
                     </div>
                   </div>
@@ -490,18 +664,18 @@ export default function VideoAnalysis({ results, onDownloadPdf, isGeneratingPdf 
                     <div className="bg-gray-50 rounded-lg p-3">
                       <h6 className="font-semibold text-gray-900 mb-2 text-sm">🏞️ Setting & Environment</h6>
                       <div className="space-y-1 text-xs">
-                        <div><strong>Location:</strong> {scene.settingEnvironment.location}</div>
-                        <div><strong>Environment:</strong> {scene.settingEnvironment.environment}</div>
-                        <div><strong>Background:</strong> {scene.settingEnvironment.background}</div>
+                        <div><strong>Location:</strong> {scene.settingEnvironment?.location || 'N/A'}</div>
+                        <div><strong>Environment:</strong> {scene.settingEnvironment?.environment || 'N/A'}</div>
+                        <div><strong>Background:</strong> {scene.settingEnvironment?.background || 'N/A'}</div>
                       </div>
                     </div>
 
                     <div className="bg-orange-50 rounded-lg p-3">
                       <h6 className="font-semibold text-orange-900 mb-2 text-sm">👥 Subjects & Focus</h6>
                       <div className="space-y-1 text-xs">
-                        <div><strong>Main:</strong> {scene.subjectsFocus.main}</div>
-                        <div><strong>Secondary:</strong> {scene.subjectsFocus.secondary}</div>
-                        <div><strong>Focus:</strong> {scene.subjectsFocus.focus}</div>
+                        <div><strong>Main:</strong> {scene.subjectsFocus?.main || 'N/A'}</div>
+                        <div><strong>Secondary:</strong> {scene.subjectsFocus?.secondary || 'N/A'}</div>
+                        <div><strong>Focus:</strong> {scene.subjectsFocus?.focus || 'N/A'}</div>
                       </div>
                     </div>
                   </div>
@@ -513,33 +687,33 @@ export default function VideoAnalysis({ results, onDownloadPdf, isGeneratingPdf 
                       <div>
                         <div className="mb-2">
                           <strong>Creator Intent</strong>
-                          <p className="text-teal-800 mt-1">{scene.intentImpactAnalysis.creatorIntent}</p>
+                          <p className="text-teal-800 mt-1">{scene.intentImpactAnalysis?.creatorIntent || 'N/A'}</p>
                         </div>
                         <div>
                           <strong>How It's Executed</strong>
-                          <p className="text-teal-800 mt-1">{scene.intentImpactAnalysis.howExecuted}</p>
+                          <p className="text-teal-800 mt-1">{scene.intentImpactAnalysis?.howExecuted || 'N/A'}</p>
                         </div>
                       </div>
                       <div>
                         <div className="mb-2">
                           <strong>Viewer Impact</strong>
-                          <p className="text-teal-800 mt-1">{scene.intentImpactAnalysis.viewerImpact}</p>
+                          <p className="text-teal-800 mt-1">{scene.intentImpactAnalysis?.viewerImpact || 'N/A'}</p>
                         </div>
                         <div>
                           <strong>Narrative Significance</strong>
-                          <p className="text-teal-800 mt-1">{scene.intentImpactAnalysis.narrativeSignificance}</p>
+                          <p className="text-teal-800 mt-1">{scene.intentImpactAnalysis?.narrativeSignificance || 'N/A'}</p>
                         </div>
                       </div>
                     </div>
                   </div>
 
                   {/* Text & Dialogue */}
-                  {scene.textDialogue.content && (
+                  {scene.textDialogue?.content && (
                     <div className="bg-pink-50 rounded-lg p-3">
                       <h6 className="font-semibold text-pink-900 mb-2 text-sm">💬 Text & Dialogue</h6>
                       <div className="text-xs">
                         <div><strong>Content:</strong> {scene.textDialogue.content}</div>
-                        <div><strong>Style:</strong> {scene.textDialogue.style}</div>
+                        <div><strong>Style:</strong> {scene.textDialogue.style || 'N/A'}</div>
                       </div>
                     </div>
                   )}
