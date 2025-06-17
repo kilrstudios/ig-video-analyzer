@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, FormEvent, useEffect } from 'react';
+import { useState, FormEvent, useEffect, useRef } from 'react';
 import VideoUploader from '@/components/VideoUploader';
 import VideoAnalysis from '@/components/VideoAnalysis';
 import AuthModal from '@/components/AuthModal';
@@ -202,6 +202,17 @@ interface VideoAnalysis {
 
 export default function Home() {
   const { user, profile, loading, refreshProfile, signOut } = useAuth() as any;
+  
+  // Helper function to format time in minutes and seconds
+  const formatTime = (seconds: number): string => {
+    if (seconds < 60) {
+      return `${seconds}s`;
+    }
+    const minutes = Math.floor(seconds / 60);
+    const remainingSeconds = seconds % 60;
+    return `${minutes}m ${remainingSeconds}s`;
+  };
+  
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [analysisResults, setAnalysisResults] = useState<VideoAnalysis | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -222,12 +233,128 @@ export default function Home() {
   const [inputMethod, setInputMethod] = useState<'url' | 'upload' | 'fbad'>('url');
   const [fbAdUrl, setFbAdUrl] = useState('');
   const [isCopying, setIsCopying] = useState(false);
+  
+  // Refs to avoid closure issues in intervals
+  const progressIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const currentRequestIdRef = useRef<string | null>(null);
 
   useEffect(() => {
     if (profile) {
       console.log('Loaded user profile', profile);
     }
   }, [profile]);
+
+  // Debug: Track progress state changes
+  useEffect(() => {
+    console.log('📈 analysisProgress state changed to:', analysisProgress);
+  }, [analysisProgress]);
+
+  // Debug function to manually test progress API
+  const testProgressAPI = async () => {
+    const testRequestId = 'req_1750195467320_l7z10vcjs'; // From logs
+    console.log('🧪 Testing progress API with ID:', testRequestId);
+    
+    try {
+      const response = await fetch(`/api/progress?requestId=${testRequestId}`);
+      console.log('🧪 Test response status:', response.status);
+      
+      if (response.ok) {
+        const data = await response.json();
+        console.log('🧪 Test response data:', JSON.stringify(data, null, 2));
+        
+        // Manually update state to see if React updates work
+        setAnalysisProgress(data.progress || 0);
+        setAnalysisStatus(data.message || 'Test message');
+      } else {
+        console.error('🧪 Test failed:', response.status);
+      }
+    } catch (err) {
+      console.error('🧪 Test error:', err);
+    }
+  };
+
+  // Debug progress polling with extensive logging
+  const startProgressPolling = (requestId: string) => {
+    console.log('🚀 Starting progress polling for:', requestId);
+    currentRequestIdRef.current = requestId;
+    
+    const pollProgress = async () => {
+      const currentRequestId = currentRequestIdRef.current;
+      if (!currentRequestId) {
+        console.log('❌ No request ID, stopping polling');
+        return;
+      }
+      
+      console.log('🔄 Polling progress for:', currentRequestId);
+      
+      try {
+        const url = `/api/progress?requestId=${currentRequestId}`;
+        console.log('📡 Fetching:', url);
+        
+        const response = await fetch(url);
+        console.log('📡 Response status:', response.status, response.statusText);
+        
+        if (response.ok) {
+          const data = await response.json();
+          console.log('📦 Raw response data:', JSON.stringify(data, null, 2));
+          
+          // Log current vs new state
+          console.log('📊 State update:', {
+            currentProgress: analysisProgress,
+            newProgress: data.progress || 0,
+            currentStatus: analysisStatus,
+            newStatus: data.message || 'Processing...',
+            phase: data.phase
+          });
+          
+          // Update state
+          setProgress(data);
+          setAnalysisProgress(data.progress || 0);
+          setAnalysisStatus(data.message || 'Processing...');
+          
+          if (data.details?.timeEstimate) {
+            setTimeEstimate(data.details.timeEstimate);
+          }
+          
+          if (data.progress >= 100) {
+            console.log('✅ Analysis complete, stopping polling');
+            stopProgressPolling();
+          }
+        } else {
+          console.error('❌ Bad response:', response.status, response.statusText);
+          const errorText = await response.text();
+          console.error('❌ Error body:', errorText);
+        }
+      } catch (err) {
+        console.error('❌ Polling error:', err);
+        if (err instanceof Error) {
+          console.error('❌ Error details:', {
+            name: err.name,
+            message: err.message,
+            stack: err.stack
+          });
+        }
+      }
+    };
+    
+    // Poll immediately, then every second
+    console.log('🏁 Starting initial poll...');
+    pollProgress();
+    
+    console.log('⏰ Setting up interval polling every 1000ms...');
+    progressIntervalRef.current = setInterval(() => {
+      console.log('⏰ Interval tick - polling again...');
+      pollProgress();
+    }, 1000);
+  };
+
+  const stopProgressPolling = () => {
+    if (progressIntervalRef.current) {
+      clearInterval(progressIntervalRef.current);
+      progressIntervalRef.current = null;
+    }
+    currentRequestIdRef.current = null;
+  };
 
   const estimateVideoDuration = async (url: string) => {
     const response = await fetch('/api/estimate-duration', {
@@ -255,41 +382,29 @@ export default function Home() {
     setError(null);
     setAnalysisResults(null);
     setProgress(null);
-    setAnalysisProgress(0);
+    setAnalysisProgress(0); // Start at 0% - backend will control all updates
     setAnalysisStatus('Starting analysis...');
     setTimeEstimate(null);
 
     const newRequestId = `req_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
     setRequestId(newRequestId);
+    console.log('🔍 Starting analysis with requestId:', newRequestId);
 
-    // Start progress polling
-    const progressInterval = setInterval(async () => {
-      try {
-        const progressResponse = await fetch(`/api/progress?requestId=${newRequestId}`);
-        if (progressResponse.ok) {
-          const progressData = await progressResponse.json();
-          setProgress(progressData);
-          setAnalysisProgress(progressData.progress || 0);
-          setAnalysisStatus(progressData.message || 'Processing...');
-          if (progressData.details?.timeEstimate) {
-            setTimeEstimate(progressData.details.timeEstimate);
-          }
-          
-          // Stop polling when complete
-          if (progressData.progress >= 100) {
-            clearInterval(progressInterval);
-          }
-        }
-      } catch (err) {
-        console.warn('Progress polling error:', err);
-      }
-    }, 1000); // Poll every second
+    // Start progress polling - this will be the ONLY source of progress updates
+    startProgressPolling(newRequestId);
 
     try {
       let response;
       
       if (typeof urlOrFile === 'string') {
         // URL analysis
+        console.log('📤 Sending analysis request for URL:', urlOrFile);
+        console.log('📤 Request payload:', { 
+          url: urlOrFile,
+          userId: user.id,
+          requestId: newRequestId
+        });
+        
         response = await fetch('/api/analyze', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -299,8 +414,17 @@ export default function Home() {
             requestId: newRequestId
           })
         });
+        
+        console.log('📥 Analysis response status:', response.status, response.statusText);
       } else {
         // File upload analysis
+        console.log('📤 Sending analysis request for file:', urlOrFile.name);
+        console.log('📤 FormData includes:', { 
+          video: urlOrFile.name,
+          userId: user.id,
+          requestId: newRequestId
+        });
+        
         const formData = new FormData();
         formData.append('video', urlOrFile);
         formData.append('userId', user.id);
@@ -310,6 +434,8 @@ export default function Home() {
           method: 'POST',
           body: formData
         });
+        
+        console.log('📥 Upload analysis response status:', response.status, response.statusText);
       }
 
       if (!response.ok) {
@@ -328,7 +454,7 @@ export default function Home() {
       console.error('Analysis error:', err);
       setError(err instanceof Error ? err.message : 'An unexpected error occurred');
     } finally {
-      clearInterval(progressInterval);
+      stopProgressPolling();
       setIsAnalyzing(false);
       setRequestId(null);
       setProgress(null);
@@ -348,35 +474,16 @@ export default function Home() {
     setError(null);
     setAnalysisResults(null);
     setProgress(null);
-    setAnalysisProgress(5); // Start at 5% for extraction
+    setAnalysisProgress(0); // Start at 0% - backend will control all updates
     setAnalysisStatus('Extracting video from Facebook ad...');
     setTimeEstimate(null);
 
     const newRequestId = `req_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
     setRequestId(newRequestId);
+    console.log('🔍 Starting FB ad analysis with requestId:', newRequestId);
 
-    // Start progress polling
-    const progressInterval = setInterval(async () => {
-      try {
-        const progressResponse = await fetch(`/api/progress?requestId=${newRequestId}`);
-        if (progressResponse.ok) {
-          const progressData = await progressResponse.json();
-          setProgress(progressData);
-          setAnalysisProgress(progressData.progress || 0);
-          setAnalysisStatus(progressData.message || 'Processing...');
-          if (progressData.details?.timeEstimate) {
-            setTimeEstimate(progressData.details.timeEstimate);
-          }
-          
-          // Stop polling when complete
-          if (progressData.progress >= 100) {
-            clearInterval(progressInterval);
-          }
-        }
-      } catch (err) {
-        console.warn('Progress polling error:', err);
-      }
-    }, 1000); // Poll every second
+    // Start progress polling - this will be the ONLY source of progress updates
+    startProgressPolling(newRequestId);
 
     try {
       // First, extract the video URL from the Facebook ad
@@ -393,9 +500,9 @@ export default function Home() {
 
       const { videoUrl } = await scrapeResponse.json();
       console.log('✅ Extracted video URL:', videoUrl);
+      console.log('🔗 Using same request ID for analysis:', newRequestId);
       
-      setAnalysisProgress(10); // Update progress after extraction
-      setAnalysisStatus('Video extracted! Starting analysis...');
+      // No manual progress updates - backend handles all progress
 
       // Now analyze the extracted video URL using the same request ID
       const response = await fetch('/api/analyze', {
@@ -404,7 +511,7 @@ export default function Home() {
         body: JSON.stringify({ 
           url: videoUrl,
           userId: user.id,
-          requestId: newRequestId // Use the same request ID for consistent progress tracking
+          requestId: newRequestId // CRITICAL: Use the same request ID for consistent progress tracking
         })
       });
 
@@ -425,7 +532,7 @@ export default function Home() {
       console.error('Facebook ad analysis error:', err);
       setError(err instanceof Error ? err.message : 'Failed to analyze Facebook ad');
     } finally {
-      clearInterval(progressInterval);
+      stopProgressPolling();
       setIsAnalyzing(false);
       setRequestId(null);
       setProgress(null);
@@ -1004,9 +1111,9 @@ export default function Home() {
                         {/* Time estimate */}
                         {timeEstimate && (
                           <div className="flex justify-center space-x-4 text-xs text-blue-600">
-                            <span>Elapsed: {timeEstimate.elapsed}s</span>
+                            <span>Elapsed: {formatTime(timeEstimate.elapsed)}</span>
                             {timeEstimate.remaining > 0 && (
-                              <span>Remaining: ~{timeEstimate.remaining}s</span>
+                              <span>Remaining: ~{formatTime(timeEstimate.remaining)}</span>
                             )}
                           </div>
                         )}

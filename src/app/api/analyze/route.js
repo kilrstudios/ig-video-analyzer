@@ -5,6 +5,7 @@ import fs from 'fs';
 import path from 'path';
 import OpenAI from 'openai';
 import { isSupabaseAvailable, getUserProfile, updateUserCredits, supabase } from '@/lib/supabase';
+import { setProgress } from '../../../lib/progressStore.js';
 
 const execAsync = promisify(exec);
 const openai = new OpenAI({
@@ -23,6 +24,16 @@ const wait = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 function logWithTimestamp(message, data = null) {
   const timestamp = new Date().toISOString();
   console.log(`[${timestamp}] ${message}`, data ? JSON.stringify(data, null, 2) : '');
+}
+
+// Helper function to format time in minutes and seconds
+function formatTime(seconds) {
+  if (seconds < 60) {
+    return `${seconds}s`;
+  }
+  const minutes = Math.floor(seconds / 60);
+  const remainingSeconds = seconds % 60;
+  return `${minutes}m ${remainingSeconds}s`;
 }
 
 // Progress tracking state
@@ -65,25 +76,16 @@ async function updateProgress(requestId, phase, progress, message, details = {})
       total: Math.round(estimatedTotal / 1000)
     };
     
-    // Use localhost for development, or the actual base URL in production
-    const baseUrl = process.env.VERCEL_URL 
-      ? `https://${process.env.VERCEL_URL}` 
-      : process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000';
-      
-    const response = await fetch(`${baseUrl}/api/progress`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ 
-        requestId, 
-        phase, 
-        progress, 
-        message, 
-        details: { ...details, timeEstimate }
-      })
+    // Use the shared progress store directly instead of HTTP requests
+    const success = setProgress(requestId, {
+      phase, 
+      progress, 
+      message, 
+      details: { ...details, timeEstimate }
     });
     
-    if (!response.ok) {
-      throw new Error(`Progress update failed: ${response.status}`);
+    if (!success) {
+      throw new Error('Failed to update progress store');
     }
     
     logWithTimestamp('📊 Progress updated', { 
@@ -91,7 +93,7 @@ async function updateProgress(requestId, phase, progress, message, details = {})
       phase, 
       progress, 
       message,
-      timeEstimate: `${timeEstimate.elapsed}s elapsed, ${timeEstimate.remaining}s remaining`
+      timeEstimate: `${formatTime(timeEstimate.elapsed)} elapsed, ${formatTime(timeEstimate.remaining)} remaining`
     });
   } catch (error) {
     // Silently fail - progress tracking is not critical
@@ -1430,7 +1432,10 @@ async function analyzeVideo(videoPath, userId = null, creditsToDeduct = null, re
   logWithTimestamp('🎬 Starting complete video analysis', { videoPath, analysisMode });
 
   try {
-  // Extract frames and audio
+    // Initialize progress immediately
+    await updateProgress(requestId, 'initializing', 1, 'Starting video analysis...');
+    
+    // Extract frames and audio
     logWithTimestamp('🔄 Phase 1: Extracting frames and audio');
     await updateProgress(requestId, 'extraction', 5, 'Downloading and extracting frames from video...');
     const framesPromise = extractFrames(videoPath, analysisMode);
@@ -3028,19 +3033,27 @@ async function cleanupFile(filePath) {
 }
 
 export async function POST(request) {
-  const requestId = `req_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
   const startTime = Date.now();
-  
-  logWithTimestamp('🚀 Starting new analysis request', { requestId });
   
   let videoPath = '';
   let requestBody = null;
+  let requestId = '';
   
   try {
     // Parse request body
-    logWithTimestamp('📥 Parsing request body', { requestId });
     requestBody = await request.json();
-    const { url, userId, estimatedCredits, analysisMode = 'standard' } = requestBody;
+    const { url, userId, estimatedCredits, analysisMode = 'standard', requestId: clientRequestId } = requestBody;
+    
+    // Use client-provided request ID or generate new one
+    requestId = clientRequestId || `req_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    
+    logWithTimestamp('🚀 Starting analysis request', { 
+      requestId, 
+      clientProvided: !!clientRequestId,
+      generatedNew: !clientRequestId 
+    });
+    
+    logWithTimestamp('📥 Request body parsed', { requestId });
     
     // Calculate credits based on analysis mode
     const creditMultipliers = {
