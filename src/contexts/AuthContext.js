@@ -149,13 +149,28 @@ export const AuthProvider = ({ children }) => {
       return { error: 'Supabase not configured' }
     }
     
+    // Determine the correct redirect URL based on environment
+    const getRedirectUrl = () => {
+      if (typeof window !== 'undefined') {
+        const { protocol, host } = window.location
+        return `${protocol}//${host}`
+      }
+      return process.env.NODE_ENV === 'production' 
+        ? 'https://ig-video-analyzer-production-8760.up.railway.app'
+        : 'http://localhost:3000'
+    }
+    
+    const redirectUrl = getRedirectUrl()
+    console.log('Using redirect URL for signup:', redirectUrl)
+    
     const { data, error } = await supabase.auth.signUp({
       email,
       password,
       options: {
         data: {
           full_name: fullName,
-        }
+        },
+        emailRedirectTo: redirectUrl
       }
     })
     return { data, error }

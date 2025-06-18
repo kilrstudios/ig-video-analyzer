@@ -15,23 +15,26 @@ const getEnvVar = (varName, fallback = null) => {
     return window.env[varName]
   }
   
-  // Railway-specific hardcoded fallback (temporary fix)
+  // Production fallback values (works for both Railway and local development)
+  const productionFallbacks = {
+    'NEXT_PUBLIC_SUPABASE_URL': 'https://ndegjkqkerrltuemgydk.supabase.co',
+    'NEXT_PUBLIC_SUPABASE_ANON_KEY': 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5kZWdqa3FrZXJybHR1ZW1neWRrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDk4MDU0NTYsImV4cCI6MjA2NTM4MTQ1Nn0.nryVTYXw0gOVjJQMMCfUW6pcVlRgMiLzJYQ2gBkZAHA'
+  }
+  
   if (typeof window !== 'undefined') {
-    const railwayFallbacks = {
-      'NEXT_PUBLIC_SUPABASE_URL': 'https://ndegjkqkerrltuemgydk.supabase.co',
-      'NEXT_PUBLIC_SUPABASE_ANON_KEY': 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5kZWdqa3FrZXJybHR1ZW1neWRrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDk4MDU0NTYsImV4cCI6MjA2NTM4MTQ1Nn0.nryVTYXw0gOVjJQMMCfUW6pcVlRgMiLzJYQ2gBkZAHA'
-    }
-    
     const hostname = window.location.hostname
     console.log(`🔍 Current hostname: ${hostname}`)
     
-    // Check if we're on Railway domain (more flexible detection)
+    // Check if we're on Railway domain or localhost without env vars
     const isRailway = hostname.includes('railway.app') || hostname.includes('up.railway.app')
-    console.log(`🚂 Is Railway deployment: ${isRailway}`)
+    const isLocalhost = hostname === 'localhost'
     
-    if (isRailway && railwayFallbacks[varName]) {
-      console.log(`🚂 Using Railway fallback for ${varName}`)
-      return railwayFallbacks[varName]
+    console.log(`🚂 Is Railway deployment: ${isRailway}`)
+    console.log(`🏠 Is localhost: ${isLocalhost}`)
+    
+    if ((isRailway || isLocalhost) && productionFallbacks[varName]) {
+      console.log(`🔧 Using production fallback for ${varName} (${isRailway ? 'Railway' : 'localhost'})`)
+      return productionFallbacks[varName]
     }
   }
   
