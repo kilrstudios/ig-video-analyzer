@@ -149,15 +149,22 @@ export const AuthProvider = ({ children }) => {
       return { error: 'Supabase not configured' }
     }
     
-    // Determine the correct redirect URL based on environment
+    // Always use production URL for email confirmations to avoid localhost redirects
     const getRedirectUrl = () => {
-      if (typeof window !== 'undefined') {
-        const { protocol, host } = window.location
-        return `${protocol}//${host}`
+      // Always prefer production URL for email confirmations
+      // This ensures email links work regardless of where signup originated
+      const productionUrl = 'https://ig-video-analyzer-production-8760.up.railway.app'
+      
+      // Only use localhost if we're in development AND explicitly want local redirects
+      if (typeof window !== 'undefined' && window.location.hostname === 'localhost') {
+        // For development, you can uncomment the line below if you want local redirects:
+        // return `${window.location.protocol}//${window.location.host}`
+        
+        // But for now, always use production for email confirmations:
+        return productionUrl
       }
-      return process.env.NODE_ENV === 'production' 
-        ? 'https://ig-video-analyzer-production-8760.up.railway.app'
-        : 'http://localhost:3000'
+      
+      return productionUrl
     }
     
     const redirectUrl = getRedirectUrl()
