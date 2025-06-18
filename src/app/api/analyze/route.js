@@ -229,8 +229,10 @@ async function downloadVideo(url) {
     if (!igUrlPattern.test(url) && !videoUrlPattern.test(url) && !fbVideoUrlPattern.test(url)) {
       throw new Error(`Invalid URL format. Please provide an Instagram URL or direct video URL: ${url}`);
     }
+    
+    const isInstagramUrl = igUrlPattern.test(url);
     logWithTimestamp('✅ URL validation passed', { 
-      urlType: igUrlPattern.test(url) ? 'instagram' : 'direct_video'
+      urlType: isInstagramUrl ? 'instagram' : 'direct_video'
     });
     
     // Create a temporary directory for downloads if it doesn't exist
@@ -249,75 +251,130 @@ async function downloadVideo(url) {
     const outputPath = path.join(downloadDir, `video_${timestamp}.mp4`);
     logWithTimestamp('📝 Generated output path', { outputPath });
     
-    // Use yt-dlp to download the video - force merge to single file
-    const command = `yt-dlp -f 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best' '${url}' -o '${outputPath}' --merge-output-format mp4 --verbose`;
-    logWithTimestamp('🔧 Executing yt-dlp command', { command });
-    
-    const execStartTime = Date.now();
-    const { stdout, stderr } = await execAsync(command, { timeout: 120000 }); // 2 minute timeout
-    const execDuration = Date.now() - execStartTime;
-    
-    logWithTimestamp('📊 yt-dlp execution completed', { 
-      duration: `${execDuration}ms`,
-      stdoutLength: stdout?.length || 0,
-      stderrLength: stderr?.length || 0
-    });
-    
-    if (stdout) logWithTimestamp('📋 yt-dlp stdout', { stdout: stdout.substring(0, 1000) + (stdout.length > 1000 ? '...[truncated]' : '') });
-    if (stderr) logWithTimestamp('⚠️ yt-dlp stderr', { stderr: stderr.substring(0, 1000) + (stderr.length > 1000 ? '...[truncated]' : '') });
+    // For Instagram URLs, try multiple strategies
+    if (isInstagramUrl) {
+      const strategies = [
+        {
+          name: 'cookies_file',
+          command: `yt-dlp -f 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best' '${url}' -o '${outputPath}' --merge-output-format mp4 --cookies ./instagram_cookies.txt --verbose`
+        },
+        {
+          name: 'no_cookies',
+          command: `yt-dlp -f 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best' '${url}' -o '${outputPath}' --merge-output-format mp4 --verbose`
+        },
+        {
+          name: 'embed_only',
+          command: `yt-dlp -f 'best[ext=mp4]/best' '${url}' -o '${outputPath}' --no-check-certificate --verbose`
+        }
+      ];
 
-    // Check if file was created - yt-dlp might modify the filename
-    let actualVideoPath = outputPath;
+      let lastError = null;
+      
+      for (const strategy of strategies) {
+        try {
+          logWithTimestamp(`🔧 Trying strategy: ${strategy.name}`, { command: strategy.command });
+          
+          const execStartTime = Date.now();
+          const { stdout, stderr } = await execAsync(strategy.command, { timeout: 120000 }); // 2 minute timeout
+          const execDuration = Date.now() - execStartTime;
+          
+          logWithTimestamp('📊 yt-dlp execution completed', { 
+            strategy: strategy.name,
+            duration: `${execDuration}ms`,
+            stdoutLength: stdout?.length || 0,
+            stderrLength: stderr?.length || 0
+          });
+          
+          if (stdout) logWithTimestamp('📋 yt-dlp stdout', { stdout: stdout.substring(0, 1000) + (stdout.length > 1000 ? '...[truncated]' : '') });
+          if (stderr) logWithTimestamp('⚠️ yt-dlp stderr', { stderr: stderr.substring(0, 1000) + (stderr.length > 1000 ? '...[truncated]' : '') });
 
-    if (!fs.existsSync(outputPath)) {
-      logWithTimestamp('⚠️ Expected video file not found, searching for actual downloaded file', { outputPath });
-      
-      // List all files in the download directory for debugging
-      const downloadDir = path.dirname(outputPath);
-      const allFiles = fs.readdirSync(downloadDir);
-      logWithTimestamp('📂 All files in temp directory', { 
-        downloadDir,
-        allFiles
-      });
-      
-      // Look for any video files that match our timestamp pattern
-      const baseFilename = path.basename(outputPath, '.mp4');
-      const videoFiles = fs.readdirSync(downloadDir)
-        .filter(file => file.startsWith(baseFilename) && (file.endsWith('.mp4') || file.endsWith('.webm')))
-        .map(file => path.join(downloadDir, file));
-      
-      logWithTimestamp('🔍 Found potential video files', { 
-        videoFiles,
-        searchPattern: `${baseFilename}*.(mp4|webm)`
-      });
-      
-      if (videoFiles.length === 0) {
-        logWithTimestamp('❌ No video files found after download', { 
-          outputPath,
-          downloadDir,
-          baseFilename
-        });
-        throw new Error('Video download failed - no output files found');
+          // Check if file was created - yt-dlp might modify the filename
+          let actualVideoPath = await findDownloadedVideo(outputPath);
+          
+          if (actualVideoPath) {
+            const stats = fs.statSync(actualVideoPath);
+            const duration = Date.now() - startTime;
+            logWithTimestamp('✅ Video download successful', { 
+              strategy: strategy.name,
+              outputPath: actualVideoPath,
+              fileSize: `${(stats.size / 1024 / 1024).toFixed(2)} MB`,
+              totalDuration: `${duration}ms`
+            });
+            
+            return actualVideoPath;
+          } else {
+            throw new Error('No output files found after download');
+          }
+          
+        } catch (error) {
+          lastError = error;
+          logWithTimestamp(`❌ Strategy ${strategy.name} failed`, { 
+            error: error.message,
+            stderr: error.stderr?.substring(0, 500)
+          });
+          
+          // If this is a login/authentication error and we have more strategies, continue
+          if (error.message.includes('login required') || error.message.includes('rate-limit') || error.message.includes('Requested content is not available')) {
+            logWithTimestamp(`⚠️ Authentication issue with ${strategy.name}, trying next strategy`);
+            continue;
+          } else {
+            // For other errors, still try next strategy but log more details
+            logWithTimestamp(`⚠️ Other error with ${strategy.name}, trying next strategy`, { error: error.message });
+            continue;
+          }
+        }
       }
       
-      // Use the first (and hopefully only) video file found
-      actualVideoPath = videoFiles[0];
-      logWithTimestamp('✅ Found actual video file', { 
-        expectedPath: outputPath,
-        actualPath: actualVideoPath
+      // All strategies failed
+      const duration = Date.now() - startTime;
+      logWithTimestamp('❌ All download strategies failed', { 
+        error: lastError?.message,
+        duration: `${duration}ms`,
+        url
       });
-    }
+      
+      // Check if this is an authentication issue
+      if (lastError?.message.includes('login required') || lastError?.message.includes('rate-limit')) {
+        throw new Error(`Instagram requires authentication to access this content. This video may be from a private account or Instagram is rate-limiting requests. Please try again later or use a different video.`);
+      } else {
+        throw new Error(`Failed to download video after trying multiple methods: ${lastError?.message}`);
+      }
+      
+    } else {
+      // For non-Instagram URLs, use the standard approach
+      const command = `yt-dlp -f 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best' '${url}' -o '${outputPath}' --merge-output-format mp4 --verbose`;
+      logWithTimestamp('🔧 Executing yt-dlp command', { command });
+      
+      const execStartTime = Date.now();
+      const { stdout, stderr } = await execAsync(command, { timeout: 120000 }); // 2 minute timeout
+      const execDuration = Date.now() - execStartTime;
+      
+      logWithTimestamp('📊 yt-dlp execution completed', { 
+        duration: `${execDuration}ms`,
+        stdoutLength: stdout?.length || 0,
+        stderrLength: stderr?.length || 0
+      });
+      
+      if (stdout) logWithTimestamp('📋 yt-dlp stdout', { stdout: stdout.substring(0, 1000) + (stdout.length > 1000 ? '...[truncated]' : '') });
+      if (stderr) logWithTimestamp('⚠️ yt-dlp stderr', { stderr: stderr.substring(0, 1000) + (stderr.length > 1000 ? '...[truncated]' : '') });
 
-    // Get file stats
-    const stats = fs.statSync(actualVideoPath);
-    const duration = Date.now() - startTime;
-    logWithTimestamp('✅ Video download successful', { 
-      outputPath: actualVideoPath,
-      fileSize: `${(stats.size / 1024 / 1024).toFixed(2)} MB`,
-      totalDuration: `${duration}ms`
-    });
+      let actualVideoPath = await findDownloadedVideo(outputPath);
+      
+      if (!actualVideoPath) {
+        throw new Error('Video download failed - no output files found');
+      }
+
+      const stats = fs.statSync(actualVideoPath);
+      const duration = Date.now() - startTime;
+      logWithTimestamp('✅ Video download successful', { 
+        outputPath: actualVideoPath,
+        fileSize: `${(stats.size / 1024 / 1024).toFixed(2)} MB`,
+        totalDuration: `${duration}ms`
+      });
+      
+      return actualVideoPath;
+    }
     
-    return actualVideoPath;
   } catch (error) {
     const duration = Date.now() - startTime;
     logWithTimestamp('❌ Video download failed', { 
@@ -327,6 +384,53 @@ async function downloadVideo(url) {
     });
     throw new Error(`Failed to download video: ${error.message}`);
   }
+}
+
+// Helper function to find downloaded video file
+async function findDownloadedVideo(expectedPath) {
+  // Check if file was created - yt-dlp might modify the filename
+  if (fs.existsSync(expectedPath)) {
+    return expectedPath;
+  }
+
+  logWithTimestamp('⚠️ Expected video file not found, searching for actual downloaded file', { expectedPath });
+  
+  // List all files in the download directory for debugging
+  const downloadDir = path.dirname(expectedPath);
+  const allFiles = fs.readdirSync(downloadDir);
+  logWithTimestamp('📂 All files in temp directory', { 
+    downloadDir,
+    allFiles
+  });
+  
+  // Look for any video files that match our timestamp pattern
+  const baseFilename = path.basename(expectedPath, '.mp4');
+  const videoFiles = fs.readdirSync(downloadDir)
+    .filter(file => file.startsWith(baseFilename) && (file.endsWith('.mp4') || file.endsWith('.webm')))
+    .map(file => path.join(downloadDir, file));
+  
+  logWithTimestamp('🔍 Found potential video files', { 
+    videoFiles,
+    searchPattern: `${baseFilename}*.(mp4|webm)`
+  });
+  
+  if (videoFiles.length === 0) {
+    logWithTimestamp('❌ No video files found after download', { 
+      expectedPath,
+      downloadDir,
+      baseFilename
+    });
+    return null;
+  }
+  
+  // Use the first (and hopefully only) video file found
+  const actualVideoPath = videoFiles[0];
+  logWithTimestamp('✅ Found actual video file', { 
+    expectedPath,
+    actualPath: actualVideoPath
+  });
+  
+  return actualVideoPath;
 }
 
 async function extractFrames(videoPath, analysisMode = 'standard') {

@@ -14,11 +14,82 @@ export async function POST(request) {
 
     console.log('Estimating duration for URL:', url);
 
-    // Use yt-dlp to get video info without downloading
-    const { stdout } = await execAsync(`yt-dlp --get-duration "${url}"`);
-    const duration = stdout.trim();
+    // Check if this is an Instagram URL
+    const igUrlPattern = /^https?:\/\/(www\.)?instagram\.com\/(p|reel|tv)\/[\w-]+/;
+    const isInstagramUrl = igUrlPattern.test(url);
 
-    console.log('Video duration:', duration);
+    let duration = null;
+    let lastError = null;
+
+    if (isInstagramUrl) {
+      // For Instagram URLs, try multiple strategies
+      const strategies = [
+        {
+          name: 'cookies_file',
+          command: `yt-dlp --get-duration "${url}" --cookies ./instagram_cookies.txt`
+        },
+        {
+          name: 'no_cookies',
+          command: `yt-dlp --get-duration "${url}"`
+        },
+        {
+          name: 'embed_only',
+          command: `yt-dlp --get-duration "${url}" --no-check-certificate`
+        }
+      ];
+
+      for (const strategy of strategies) {
+        try {
+          console.log(`Trying duration estimation strategy: ${strategy.name}`);
+          const { stdout } = await execAsync(strategy.command);
+          duration = stdout.trim();
+          console.log(`Duration estimation successful with ${strategy.name}:`, duration);
+          break;
+        } catch (error) {
+          lastError = error;
+          console.log(`Strategy ${strategy.name} failed:`, error.message);
+          
+          // If this is a login/authentication error, try next strategy
+          if (error.message.includes('login required') || error.message.includes('rate-limit') || error.message.includes('Requested content is not available')) {
+            console.log(`Authentication issue with ${strategy.name}, trying next strategy`);
+            continue;
+          }
+        }
+      }
+    } else {
+      // For non-Instagram URLs, use standard approach
+      try {
+        const { stdout } = await execAsync(`yt-dlp --get-duration "${url}"`);
+        duration = stdout.trim();
+        console.log('Video duration:', duration);
+      } catch (error) {
+        lastError = error;
+        console.log('Duration estimation failed:', error.message);
+      }
+    }
+
+    if (!duration) {
+      console.log('All duration estimation strategies failed, using fallback');
+      
+      // Check if this is an authentication issue
+      if (lastError?.message.includes('login required') || lastError?.message.includes('rate-limit')) {
+        return NextResponse.json({
+          duration: "15s",
+          durationInSeconds: 15,
+          estimatedCredits: 1,
+          isEstimate: true,
+          note: "Instagram requires authentication - using default estimate. The video analysis may still work with different methods."
+        });
+      } else {
+        return NextResponse.json({
+          duration: "15s",
+          durationInSeconds: 15,
+          estimatedCredits: 1,
+          isEstimate: true,
+          note: "Could not determine exact duration - using default estimate"
+        });
+      }
+    }
 
     // Convert duration to seconds if it's in format like "0:15" or "1:30"
     let durationInSeconds;
