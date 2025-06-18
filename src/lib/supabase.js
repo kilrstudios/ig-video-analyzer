@@ -100,24 +100,12 @@ export const getUserProfile = async (userId) => {
   console.log('Querying user_profiles table...')
   
   try {
-    // Try with 'id' field first
-    let { data, error } = await supabase
+    // Query by 'id' field (user_profiles.id = auth.users.id)
+    const { data, error } = await supabase
       .from('user_profiles')
       .select('*')
       .eq('id', userId)
       .maybeSingle()
-    
-    // If not found, try with 'user_id' field
-    if (!data && !error) {
-      console.log('Trying with user_id field...')
-      const result = await supabase
-        .from('user_profiles')
-        .select('*')
-        .eq('user_id', userId)
-        .maybeSingle()
-      data = result.data
-      error = result.error
-    }
     
     console.log('getUserProfile result:', { data, error })
     
