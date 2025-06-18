@@ -89,34 +89,49 @@ export const isSupabaseAvailable = () => {
 
 // Helper function to get the current user's profile
 export const getUserProfile = async (userId) => {
-  console.log('getUserProfile called with userId:', userId)
-  console.log('Supabase client available:', !!supabase)
+  console.log('🔍 getUserProfile v2.0 called with userId:', userId)
+  console.log('📊 Supabase client available:', !!supabase)
   
   if (!supabase) {
-    console.error('Supabase client not initialized!')
+    console.error('❌ Supabase client not initialized!')
     throw new Error('Supabase client not initialized. Please check your environment variables.')
   }
   
-  console.log('Querying user_profiles table...')
+  console.log('🔍 Querying user_profiles table with id column...')
   
   try {
-    // Query by 'id' field (user_profiles.id = auth.users.id)
+    // Query by 'id' field ONLY (user_profiles.id = auth.users.id)
+    // This is the ONLY correct way to query user profiles
     const { data, error } = await supabase
       .from('user_profiles')
       .select('*')
-      .eq('id', userId)
+      .eq('id', userId)  // ALWAYS use 'id', never 'user_id'
       .maybeSingle()
     
-    console.log('getUserProfile result:', { data, error })
+    console.log('✅ getUserProfile result:', { 
+      hasData: !!data, 
+      dataKeys: data ? Object.keys(data) : null,
+      error: error?.message || null 
+    })
     
     if (error && error.code !== 'PGRST116') {
-      console.error('getUserProfile error:', error)
+      console.error('❌ getUserProfile error:', error)
       throw error
+    }
+    
+    if (data) {
+      console.log('✅ Profile found:', { 
+        id: data.id, 
+        email: data.email, 
+        credits: data.credits_balance 
+      })
+    } else {
+      console.log('⚠️ No profile found for user:', userId)
     }
     
     return data
   } catch (err) {
-    console.error('getUserProfile caught error:', err)
+    console.error('💥 getUserProfile caught error:', err)
     throw err
   }
 }

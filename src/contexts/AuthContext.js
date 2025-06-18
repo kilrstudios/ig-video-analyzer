@@ -74,7 +74,7 @@ export const AuthProvider = ({ children }) => {
 
   const loadUserProfile = async (userId, userObj = null) => {
     try {
-      console.log('Loading user profile for:', userId)
+      console.log('🔄 AuthContext loadUserProfile v2.0 for:', userId)
       
       // Add timeout to prevent hanging
       const profilePromise = getUserProfile(userId)
@@ -83,10 +83,10 @@ export const AuthProvider = ({ children }) => {
       )
       
       let profileData = await Promise.race([profilePromise, timeoutPromise])
-      console.log('Profile data from getUserProfile:', profileData)
+      console.log('📊 Profile data from getUserProfile v2.0:', profileData)
       
       if (!profileData) {
-        console.log('No profile found, creating new profile with 10 credits')
+        console.log('🆕 No profile found, creating new profile with 10 credits')
         // Use current user object or passed userObj
         const currentUser = userObj || user
         
@@ -94,10 +94,10 @@ export const AuthProvider = ({ children }) => {
         profileData = await createUserProfileWithRetry(userId, currentUser)
       }
       
-      console.log('Setting profile:', profileData)
+      console.log('✅ Setting profile v2.0:', profileData)
       setProfile(profileData)
     } catch (error) {
-      console.error('Error loading user profile:', error)
+      console.error('❌ Error loading user profile v2.0:', error)
       // Set a default profile if everything fails
       setProfile({ id: userId, credits_balance: 10 })
     }
