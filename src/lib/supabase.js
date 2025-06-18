@@ -3,13 +3,15 @@ import { validateEnvironment } from './env-check'
 
 // Multiple fallback strategies for getting environment variables
 const getEnvVar = (varName, fallback = null) => {
-  // Try process.env first
-  if (process.env[varName]) {
+  // Try process.env first (works on both server and client in Next.js)
+  if (process.env[varName] && process.env[varName] !== 'undefined') {
+    console.log(`✅ Found ${varName} in process.env`)
     return process.env[varName]
   }
   
   // Try window.env if available (for client-side)
   if (typeof window !== 'undefined' && window.env && window.env[varName]) {
+    console.log(`✅ Found ${varName} in window.env`)
     return window.env[varName]
   }
   
@@ -20,18 +22,36 @@ const getEnvVar = (varName, fallback = null) => {
       'NEXT_PUBLIC_SUPABASE_ANON_KEY': 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5kZWdqa3FrZXJybHR1ZW1neWRrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDk4MDU0NTYsImV4cCI6MjA2NTM4MTQ1Nn0.nryVTYXw0gOVjJQMMCfUW6pcVlRgMiLzJYQ2gBkZAHA'
     }
     
-    // Check if we're on Railway domain
-    if (window.location.hostname.includes('railway.app')) {
-      console.log('🚂 Detected Railway deployment, using fallback values')
-      return railwayFallbacks[varName] || fallback
+    const hostname = window.location.hostname
+    console.log(`🔍 Current hostname: ${hostname}`)
+    
+    // Check if we're on Railway domain (more flexible detection)
+    const isRailway = hostname.includes('railway.app') || hostname.includes('up.railway.app')
+    console.log(`🚂 Is Railway deployment: ${isRailway}`)
+    
+    if (isRailway && railwayFallbacks[varName]) {
+      console.log(`🚂 Using Railway fallback for ${varName}`)
+      return railwayFallbacks[varName]
     }
   }
   
+  console.log(`❌ Could not find ${varName} anywhere`)
   return fallback
 }
 
-const supabaseUrl = getEnvVar('NEXT_PUBLIC_SUPABASE_URL')
-const supabaseAnonKey = getEnvVar('NEXT_PUBLIC_SUPABASE_ANON_KEY')
+// Get environment variables with enhanced detection
+let supabaseUrl = getEnvVar('NEXT_PUBLIC_SUPABASE_URL')
+let supabaseAnonKey = getEnvVar('NEXT_PUBLIC_SUPABASE_ANON_KEY')
+
+// Final fallback - if running on Railway and still no vars, use hardcoded values
+if (typeof window !== 'undefined' && (!supabaseUrl || !supabaseAnonKey)) {
+  const hostname = window.location.hostname
+  if (hostname.includes('railway.app') || hostname.includes('up.railway.app')) {
+    console.log('🚂 Final Railway fallback activated')
+    supabaseUrl = supabaseUrl || 'https://ndegjkqkerrltuemgydk.supabase.co'
+    supabaseAnonKey = supabaseAnonKey || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5kZWdqa3FrZXJybHR1ZW1neWRrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDk4MDU0NTYsImV4cCI6MjA2NTM4MTQ1Nn0.nryVTYXw0gOVjJQMMCfUW6pcVlRgMiLzJYQ2gBkZAHA'
+  }
+}
 
 // Create a function to get the Supabase client
 const getSupabaseClient = () => {
