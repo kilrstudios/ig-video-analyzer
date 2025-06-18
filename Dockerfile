@@ -1,7 +1,7 @@
 # Use the official Node.js runtime as the base image
 FROM node:18-bullseye-slim
 
-# Install dependencies for Chrome
+# Install dependencies for Chrome and video processing
 RUN apt-get update && apt-get install -y \
     wget \
     gnupg \
@@ -33,6 +33,9 @@ RUN apt-get update && apt-get install -y \
     libgtk-3-0 \
     libnss3 \
     fonts-liberation \
+    python3 \
+    python3-pip \
+    ffmpeg \
     --no-install-recommends
 
 # Install Chrome directly
@@ -41,6 +44,9 @@ RUN wget -q -O - https://dl.google.com/linux/linux_signing_key.pub | apt-key add
     && apt-get update \
     && apt-get install -y google-chrome-stable \
     && rm -rf /var/lib/apt/lists/*
+
+# Install yt-dlp for video downloading
+RUN pip3 install --no-cache-dir yt-dlp
 
 # Set environment variables for Puppeteer
 ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true \
