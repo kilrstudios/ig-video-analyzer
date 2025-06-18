@@ -12,10 +12,17 @@ export default function AuthModal({ isOpen, onClose, defaultTab = 'signin' }) {
   const [error, setError] = useState('')
   const [message, setMessage] = useState('')
 
-  const { signIn, signUp } = useAuth()
+  const { signIn, signUp, isSupabaseAvailable, supabaseError } = useAuth()
 
   const handleSubmit = async (e) => {
     e.preventDefault()
+    
+    // Check if Supabase is available before proceeding
+    if (!isSupabaseAvailable) {
+      setError('Authentication is currently unavailable. Please try again later or contact support.')
+      return
+    }
+    
     setLoading(true)
     setError('')
     setMessage('')
@@ -27,7 +34,7 @@ export default function AuthModal({ isOpen, onClose, defaultTab = 'signin' }) {
         console.log('AuthModal: Sign in result:', { data, error })
         if (error) {
           console.log('AuthModal: Sign in error:', error.message)
-          setError(error.message)
+          setError(error.message || 'Sign in failed. Please check your credentials.')
         } else {
           console.log('AuthModal: Sign in successful, closing modal immediately')
           // Close modal immediately, don't wait for profile loading
@@ -36,7 +43,7 @@ export default function AuthModal({ isOpen, onClose, defaultTab = 'signin' }) {
       } else {
         const { error } = await signUp(email, password, fullName)
         if (error) {
-          setError(error.message)
+          setError(error.message || 'Account creation failed. Please try again.')
         } else {
           setMessage('Check your email for the confirmation link!')
         }
@@ -109,6 +116,23 @@ export default function AuthModal({ isOpen, onClose, defaultTab = 'signin' }) {
 
         {/* Content */}
         <div className="p-6">
+          {/* Show Supabase configuration warning if not available */}
+          {!isSupabaseAvailable && (
+            <div className="mb-4 p-4 bg-yellow-50 border border-yellow-200 rounded-lg">
+              <div className="flex items-start">
+                <svg className="w-5 h-5 text-yellow-400 mt-0.5 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L3.732 16.5c-.77.833.192 2.5 1.732 2.5z" />
+                </svg>
+                <div>
+                  <h4 className="font-medium text-yellow-800">Authentication Unavailable</h4>
+                  <p className="text-sm text-yellow-700 mt-1">
+                    User accounts are temporarily unavailable. You can still analyze videos without an account, but features like saved history and credits won't be available.
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
+
           {message && (
             <div className="mb-4 p-4 bg-green-50 border border-green-200 rounded-lg">
               <p className="text-green-800 text-sm">{message}</p>
@@ -134,6 +158,7 @@ export default function AuthModal({ isOpen, onClose, defaultTab = 'signin' }) {
                   onChange={(e) => setFullName(e.target.value)}
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                   required
+                  disabled={!isSupabaseAvailable}
                 />
               </div>
             )}
@@ -147,8 +172,9 @@ export default function AuthModal({ isOpen, onClose, defaultTab = 'signin' }) {
                 type="email"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:bg-gray-100"
                 required
+                disabled={!isSupabaseAvailable}
               />
             </div>
 
@@ -161,9 +187,10 @@ export default function AuthModal({ isOpen, onClose, defaultTab = 'signin' }) {
                 type="password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:bg-gray-100"
                 required
                 minLength={6}
+                disabled={!isSupabaseAvailable}
               />
               {activeTab === 'signup' && (
                 <p className="mt-1 text-xs text-gray-500">Must be at least 6 characters</p>
@@ -172,7 +199,7 @@ export default function AuthModal({ isOpen, onClose, defaultTab = 'signin' }) {
 
             <button
               type="submit"
-              disabled={loading}
+              disabled={loading || !isSupabaseAvailable}
               className="w-full bg-blue-600 text-white py-2 px-4 rounded-lg hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center"
             >
               {loading ? (
@@ -183,13 +210,15 @@ export default function AuthModal({ isOpen, onClose, defaultTab = 'signin' }) {
                   </svg>
                   {activeTab === 'signin' ? 'Signing in...' : 'Creating account...'}
                 </>
+              ) : !isSupabaseAvailable ? (
+                'Authentication Unavailable'
               ) : (
                 activeTab === 'signin' ? 'Sign In' : 'Create Account'
               )}
             </button>
           </form>
 
-          {activeTab === 'signup' && (
+          {activeTab === 'signup' && isSupabaseAvailable && (
             <div className="mt-6 p-4 bg-blue-50 border border-blue-200 rounded-lg">
               <h4 className="font-semibold text-blue-800 mb-2">🎉 Welcome Bonus!</h4>
               <p className="text-sm text-blue-700">
@@ -198,17 +227,19 @@ export default function AuthModal({ isOpen, onClose, defaultTab = 'signin' }) {
             </div>
           )}
 
-          <div className="mt-6 text-center">
-            <p className="text-sm text-gray-600">
-              {activeTab === 'signin' ? "Don't have an account? " : "Already have an account? "}
-              <button
-                onClick={() => switchTab(activeTab === 'signin' ? 'signup' : 'signin')}
-                className="text-blue-600 hover:text-blue-500 font-medium"
-              >
-                {activeTab === 'signin' ? 'Sign up' : 'Sign in'}
-              </button>
-            </p>
-          </div>
+          {isSupabaseAvailable && (
+            <div className="mt-6 text-center">
+              <p className="text-sm text-gray-600">
+                {activeTab === 'signin' ? "Don't have an account? " : "Already have an account? "}
+                <button
+                  onClick={() => switchTab(activeTab === 'signin' ? 'signup' : 'signin')}
+                  className="text-blue-600 hover:text-blue-500 font-medium"
+                >
+                  {activeTab === 'signin' ? 'Sign up' : 'Sign in'}
+                </button>
+              </p>
+            </div>
+          )}
         </div>
       </div>
     </div>

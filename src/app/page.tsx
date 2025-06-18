@@ -202,7 +202,7 @@ interface VideoAnalysis {
 }
 
 export default function Home() {
-  const { user, profile, loading, refreshProfile, signOut } = useAuth() as any;
+  const { user, profile, loading, refreshProfile, signOut, isSupabaseAvailable, supabaseError } = useAuth() as any;
   
   // Helper function to format time in minutes and seconds
   const formatTime = (seconds: number): string => {
@@ -920,16 +920,30 @@ export default function Home() {
                     Sign Out
                   </button>
                 </div>
-              ) : (
+              ) : isSupabaseAvailable ? (
                 <button
                   onClick={() => setShowAuthModal(true)}
                   className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-3 rounded-lg font-medium transition-colors flex items-center gap-2"
                 >
                   <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 16l-4-4m0 0l4-4m-4 4h14m-5 4v1a3 3 0 01-3-3V7a3 3 0 013-3h7a3 3 0 013 3v1" />
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 16l-4-4m0 0l4-4m-4 4h14m-5 4v1a3 3 0 01-3-3V7a3 3 0 013 3v1" />
                   </svg>
                   Sign In to Analyze Videos
                 </button>
+              ) : (
+                <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
+                  <div className="flex items-start">
+                    <svg className="w-5 h-5 text-yellow-400 mt-0.5 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L3.732 16.5c-.77.833.192 2.5 1.732 2.5z" />
+                    </svg>
+                    <div>
+                      <h4 className="font-medium text-yellow-800">Demo Mode</h4>
+                      <p className="text-sm text-yellow-700 mt-1">
+                        Running in demo mode. Video analysis is available without authentication, but user accounts and saved history are temporarily unavailable.
+                      </p>
+                    </div>
+                  </div>
+                </div>
               )}
             </div>
           </div>
