@@ -3441,10 +3441,18 @@ export async function POST(request) {
 
     logWithTimestamp('✅ Environment validation passed', { requestId });
 
-    // Start video analysis
-    logWithTimestamp('🎬 Starting video analysis pipeline', { requestId, url });
+    // Clean and validate URL
+    const cleanUrl = url.trim().replace(/[;,]$/, ''); // Remove trailing semicolons or commas
+    logWithTimestamp('🧹 URL cleaned', { 
+      originalUrl: url,
+      cleanedUrl: cleanUrl,
+      hadTrailingChars: url !== cleanUrl
+    });
 
-    videoPath = await downloadVideo(url);
+    // Start video analysis
+    logWithTimestamp('🎬 Starting video analysis pipeline', { requestId, cleanUrl });
+
+    videoPath = await downloadVideo(cleanUrl);
     logWithTimestamp('✅ Video download completed', { requestId, videoPath });
     
     // Initialize credits deduction value
