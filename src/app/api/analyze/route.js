@@ -1269,8 +1269,8 @@ async function analyzeAudio(audioPath) {
       segmentCount: transcription.segments?.length || 0
     });
 
-  // Enhanced audio separation with better music detection
-    logWithTimestamp('🎼 Starting enhanced audio separation and analysis');
+  // Audio content analysis with content policy compliance
+    logWithTimestamp('🎼 Starting audio content analysis');
     const analysisStartTime = Date.now();
     
   const separationAnalysis = await handleRateLimit(async () => {
@@ -1279,65 +1279,41 @@ async function analyzeAudio(audioPath) {
       messages: [
         {
           role: "user",
-          content: `CRITICAL: Analyze this audio transcript and distinguish between SPOKEN DIALOGUE and SUNG MUSIC LYRICS.
+          content: `Analyze this audio transcript to understand the content type and context for video analysis purposes.
 
-FULL TRANSCRIPT: "${transcription.text}"
+TRANSCRIPT: "${transcription.text}"
 
-TIMESTAMPED SEGMENTS:
+SEGMENTS:
 ${transcription.segments?.map(seg => `${seg.start.toFixed(1)}s-${seg.end.toFixed(1)}s: "${seg.text}"`).join('\n') || 'No segments available'}
 
-MUSIC DETECTION CLUES:
-- Repetitive phrases or choruses
-- Rhyming patterns
-- Melodic/rhythmic delivery
-- Song titles or famous lyrics
-- Musical instruments in background
-- Singing voice vs speaking voice
-
-DIALOGUE DETECTION CLUES:
-- Conversational tone
-- Natural speech patterns
-- Narration or voice-over
-- Direct communication
-- Explanatory content
-
-Provide analysis in this JSON format:
+Classify the audio content and provide analysis in this JSON format:
 {
-  "audioType": "dialogue|music|mixed",
+  "audioType": "dialogue|music|mixed|silent",
   "confidence": 0.95,
   "dialogue": {
-    "content": "[ONLY spoken words/narration - exclude sung lyrics]",
-    "segments": [{"start": 0, "end": 5, "text": "dialogue text", "type": "narration|conversation|voiceover"}],
-    "primaryContext": "[main message from spoken content]",
+    "content": "[spoken words and narration]",
+    "primaryContext": "[main message or theme]",
     "isEmpty": false
   },
-  "musicLyrics": {
-    "content": "[ONLY sung lyrics - exclude spoken words]",
-    "songTitle": "[if recognizable song]",
-    "mood": "[musical genre/mood]",
-    "role": "[background|foreground|thematic]",
+  "musicContent": {
+    "hasMusic": true,
+    "content": "[any lyrical content]",
+    "mood": "[upbeat|calm|dramatic|etc]",
+    "role": "[background|prominent]",
     "isEmpty": false
   },
   "soundDesign": {
-    "effects": "[sound effects, ambient sounds]",
-    "musicInstruments": "[detected instruments]",
-    "audioQuality": "[clear|muffled|background]"
+    "audioQuality": "[clear|muffled|background]",
+    "estimatedType": "[professional|user-generated|mixed]"
   },
   "contextPriority": "dialogue|music|mixed",
-  "reasoning": "[explain why you classified it this way]",
-  "audioSummary": "[what the audio tells us about the video's purpose]"
+  "videoContext": "[what this audio suggests about the video's purpose - educational, entertainment, commercial, etc]"
 }
 
-EXAMPLES:
-- "The raindrops are falling on my head" = MUSIC LYRICS (famous song)
-- "Let me show you how to do this" = DIALOGUE (instructional)
-- "I was walking down the street when..." = DIALOGUE (narration)
-- "We are the champions, my friends" = MUSIC LYRICS (Queen song)
-
-Be very precise - if it sounds like singing or is from a known song, classify as music lyrics.`
+Focus on content classification for video analysis, not identification of specific copyrighted material.`
         }
       ],
-      max_tokens: 1500
+      max_tokens: 1000
     });
     return response.choices[0].message.content;
   });
@@ -1346,57 +1322,54 @@ Be very precise - if it sounds like singing or is from a known song, classify as
   let separatedAudio = null;
   try {
     separatedAudio = JSON.parse(separationAnalysis);
-    logWithTimestamp('✅ Enhanced audio separation successful', {
+    logWithTimestamp('✅ Audio analysis successful', {
       audioType: separatedAudio.audioType,
       confidence: separatedAudio.confidence,
       hasDialogue: !separatedAudio.dialogue?.isEmpty,
-      hasMusicLyrics: !separatedAudio.musicLyrics?.isEmpty,
+      hasMusic: separatedAudio.musicContent?.hasMusic,
       contextPriority: separatedAudio.contextPriority,
-      reasoning: separatedAudio.reasoning
+      videoContext: separatedAudio.videoContext
     });
   } catch (parseError) {
-    logWithTimestamp('⚠️ Failed to parse audio separation, using fallback');
+    logWithTimestamp('⚠️ Failed to parse audio analysis, using fallback');
     separatedAudio = {
       audioType: 'mixed',
       confidence: 0.5,
       dialogue: { 
         content: transcription.text, 
-        primaryContext: 'Audio separation failed - full transcript available',
+        primaryContext: 'Audio analysis failed - full transcript available',
         isEmpty: false
       },
-      musicLyrics: { content: '', mood: 'Unknown', isEmpty: true },
-      soundDesign: { effects: 'Unknown', audioQuality: 'Unknown' },
+      musicContent: { hasMusic: false, content: '', mood: 'Unknown', isEmpty: true },
+      soundDesign: { audioQuality: 'Unknown', estimatedType: 'Unknown' },
       contextPriority: 'dialogue',
-      reasoning: 'Fallback due to parsing error',
-      audioSummary: 'Full transcript: ' + transcription.text
+      videoContext: 'Full transcript: ' + transcription.text
     };
   }
 
-  // Generate comprehensive audio analysis with better context
-  const analysis = `ENHANCED AUDIO CONTEXT ANALYSIS:
+  // Generate comprehensive audio analysis
+  const analysis = `AUDIO CONTEXT ANALYSIS:
 
 AUDIO TYPE: ${separatedAudio.audioType?.toUpperCase()} (${Math.round((separatedAudio.confidence || 0.5) * 100)}% confidence)
-REASONING: ${separatedAudio.reasoning || 'Not provided'}
-
-PRIMARY DIALOGUE: ${separatedAudio.dialogue?.isEmpty ? 'None detected' : separatedAudio.dialogue?.content || 'None detected'}
 Context Priority: ${separatedAudio.contextPriority || 'Unknown'}
+
+DIALOGUE CONTENT: ${separatedAudio.dialogue?.isEmpty ? 'None detected' : separatedAudio.dialogue?.content || 'None detected'}
 Key Message: ${separatedAudio.dialogue?.primaryContext || 'Not available'}
 
-MUSIC/LYRICS: ${separatedAudio.musicLyrics?.isEmpty ? 'None detected' : separatedAudio.musicLyrics?.content || 'None detected'}
-Song Title: ${separatedAudio.musicLyrics?.songTitle || 'Unknown'}
-Musical Mood: ${separatedAudio.musicLyrics?.mood || 'Not detected'}
-Music Role: ${separatedAudio.musicLyrics?.role || 'Unknown'}
+MUSIC PRESENCE: ${separatedAudio.musicContent?.hasMusic ? 'Detected' : 'None detected'}
+Musical Content: ${separatedAudio.musicContent?.isEmpty ? 'None' : separatedAudio.musicContent?.content || 'None'}
+Musical Mood: ${separatedAudio.musicContent?.mood || 'Not detected'}
+Music Role: ${separatedAudio.musicContent?.role || 'Unknown'}
 
-SOUND DESIGN: ${separatedAudio.soundDesign?.effects || 'Standard audio'}
-Audio Quality: ${separatedAudio.soundDesign?.audioQuality || 'Unknown'}
-Instruments: ${separatedAudio.soundDesign?.musicInstruments || 'None detected'}
+AUDIO QUALITY: ${separatedAudio.soundDesign?.audioQuality || 'Unknown'}
+Content Type: ${separatedAudio.soundDesign?.estimatedType || 'Unknown'}
 
-OVERALL CONTEXT: ${separatedAudio.audioSummary || 'Audio provides context through transcript'}`;
+VIDEO CONTEXT: ${separatedAudio.videoContext || 'Audio provides context through transcript'}`;
 
     const analysisDuration = Date.now() - analysisStartTime;
     const totalDuration = Date.now() - startTime;
     
-    logWithTimestamp('✅ Enhanced audio analysis complete', { 
+    logWithTimestamp('✅ Audio analysis complete', { 
       transcriptionDuration: `${transcriptionDuration}ms`,
       analysisDuration: `${analysisDuration}ms`,
       totalDuration: `${totalDuration}ms`,
@@ -1410,12 +1383,30 @@ OVERALL CONTEXT: ${separatedAudio.audioSummary || 'Audio provides context throug
   };
   } catch (error) {
     const duration = Date.now() - startTime;
-    logWithTimestamp('❌ Audio analysis failed', { 
+    logWithTimestamp('❌ Audio analysis failed, using minimal fallback', { 
       error: error.message,
       duration: `${duration}ms`,
       audioPath
     });
-    throw new Error(`Failed to analyze audio: ${error.message}`);
+    
+    // Return minimal audio analysis to allow video processing to continue
+    return {
+      transcription: { text: 'Audio analysis failed', segments: [] },
+      separatedAudio: {
+        audioType: 'unknown',
+        confidence: 0.0,
+        dialogue: { 
+          content: 'Audio analysis unavailable due to processing error',
+          primaryContext: 'Unable to analyze audio content',
+          isEmpty: true
+        },
+        musicContent: { hasMusic: false, content: '', mood: 'Unknown', isEmpty: true },
+        soundDesign: { audioQuality: 'Unknown', estimatedType: 'Unknown' },
+        contextPriority: 'unknown',
+        videoContext: 'Audio analysis failed - visual analysis only'
+      },
+      analysis: `AUDIO ANALYSIS: Failed to process audio content. Video analysis will continue with visual elements only.`
+    };
   }
 }
 
