@@ -6,6 +6,7 @@ import VideoAnalysis from '@/components/VideoAnalysis';
 import AuthModal from '@/components/AuthModal';
 import { useAuth } from '@/contexts/AuthContext';
 
+
 // ... existing interfaces ...
 interface Scene {
   sceneNumber: number;
