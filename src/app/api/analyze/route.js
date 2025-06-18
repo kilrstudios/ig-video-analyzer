@@ -335,7 +335,21 @@ async function downloadVideo(url) {
       
       // Check if this is an authentication issue
       if (lastError?.message.includes('login required') || lastError?.message.includes('rate-limit')) {
-        throw new Error(`Instagram requires authentication to access this content. This video may be from a private account or Instagram is rate-limiting requests. Please try again later or use a different video.`);
+        throw new Error(`🔐 Instagram Authentication Required
+
+This Instagram video requires authentication to download. This can happen when:
+• The video is from a private account
+• Instagram is rate-limiting requests to our server
+• The video has restricted access settings
+
+**Suggested Solutions:**
+1. **Try a different Instagram video** (public account, recent post)
+2. **Upload the video directly** using the "Upload Video" tab instead
+3. **Use a Facebook Ad Library URL** if analyzing an ad
+
+**For Developers:** To fix Instagram downloads on Railway, you need to add valid Instagram cookies to the 'instagram_cookies.txt' file. See the file comments for instructions.
+
+**Note:** Video analysis still works perfectly with uploaded files and Facebook ads!`);
       } else {
         throw new Error(`Failed to download video after trying multiple methods: ${lastError?.message}`);
       }
