@@ -3467,7 +3467,8 @@ export async function POST(request) {
             const { data: newProfile, error: insertErr } = await supabase
               .from('user_profiles')
               .insert({ 
-                id: userId, 
+                id: userId,
+                email: 'unknown@example.com', // Will be updated by trigger if needed
                 credits_balance: DEFAULT_INITIAL_CREDITS,
                 created_at: new Date().toISOString(),
                 updated_at: new Date().toISOString()

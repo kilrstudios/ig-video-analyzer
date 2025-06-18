@@ -33,7 +33,7 @@ export const AuthProvider = ({ children }) => {
         const { data: { session } } = await supabase.auth.getSession()
         if (session?.user) {
           setUser(session.user)
-          await loadUserProfile(session.user.id)
+          await loadUserProfile(session.user.id, session.user)
         }
       } catch (error) {
         console.error('Error getting initial session:', error)
@@ -53,9 +53,9 @@ export const AuthProvider = ({ children }) => {
             console.log('Setting user from auth state change:', session.user.email)
             setUser(session.user)
             // Load profile in background, don't block UI
-            loadUserProfile(session.user.id).catch(err => {
+            loadUserProfile(session.user.id, session.user).catch(err => {
               console.error('Profile loading failed, using default:', err)
-              setProfile({ id: session.user.id, credits_balance: 100 })
+              setProfile({ id: session.user.id, credits_balance: 10 })
             })
           } else {
             console.log('Clearing user from auth state change')
@@ -72,7 +72,7 @@ export const AuthProvider = ({ children }) => {
     return () => subscription.unsubscribe()
   }, [])
 
-  const loadUserProfile = async (userId) => {
+  const loadUserProfile = async (userId, userObj = null) => {
     try {
       console.log('Loading user profile for:', userId)
       
@@ -86,17 +86,25 @@ export const AuthProvider = ({ children }) => {
       console.log('Profile data from getUserProfile:', profileData)
       
       if (!profileData) {
-        console.log('No profile found, creating new profile with 100 credits')
+        console.log('No profile found, creating new profile with 10 credits')
+        // Use current user object or passed userObj
+        const currentUser = userObj || user
+        
         // Auto-create profile with starter credits if not found
         const { data: newProfile, error: insertErr } = await supabase
           .from('user_profiles')
-          .insert({ id: userId, credits_balance: 100 })
+          .insert({ 
+            id: userId, 
+            email: currentUser?.email || 'unknown@example.com',
+            full_name: currentUser?.user_metadata?.full_name || currentUser?.email || 'User',
+            credits_balance: 10 
+          })
           .select()
           .single()
         if (insertErr) {
           console.error('Failed to auto-create profile', insertErr)
           // Set a default profile if creation fails
-          profileData = { id: userId, credits_balance: 100 }
+          profileData = { id: userId, credits_balance: 10 }
         } else {
           console.log('Created new profile:', newProfile)
           profileData = newProfile
@@ -108,7 +116,7 @@ export const AuthProvider = ({ children }) => {
     } catch (error) {
       console.error('Error loading user profile:', error)
       // Set a default profile if everything fails
-      setProfile({ id: userId, credits_balance: 100 })
+      setProfile({ id: userId, credits_balance: 10 })
     }
   }
 
