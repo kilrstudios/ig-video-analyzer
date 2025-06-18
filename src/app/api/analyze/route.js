@@ -3108,6 +3108,9 @@ async function cleanupFile(filePath) {
   }
 }
 
+// Export the analyzeVideo function for use in other routes
+export { analyzeVideo };
+
 export async function POST(request) {
   const startTime = Date.now();
   

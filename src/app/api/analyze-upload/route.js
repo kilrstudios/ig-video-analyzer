@@ -1,12 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server';
 import path from 'path';
 import fs from 'fs';
-import ffmpeg from 'fluent-ffmpeg';
+import { exec } from 'child_process';
+import { promisify } from 'util';
 import { v4 as uuidv4 } from 'uuid';
 import { createClient } from '@supabase/supabase-js';
 
 // Import the existing analysis logic
 import { analyzeVideo } from '../analyze/route.js';
+
+const execAsync = promisify(exec);
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL,
@@ -22,17 +25,16 @@ function ensureUploadDir() {
   return uploadDir;
 }
 
-// Helper function to get video duration
-function getVideoDuration(filePath) {
-  return new Promise((resolve, reject) => {
-    ffmpeg.ffprobe(filePath, (err, metadata) => {
-      if (err) {
-        reject(err);
-        return;
-      }
-      resolve(metadata.format.duration);
-    });
-  });
+// Helper function to get video duration using ffprobe
+async function getVideoDuration(filePath) {
+  try {
+    const { stdout } = await execAsync(
+      `ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "${filePath}"`
+    );
+    return parseFloat(stdout.trim());
+  } catch (error) {
+    throw new Error(`Failed to get video duration: ${error.message}`);
+  }
 }
 
 export async function POST(request) {
@@ -42,7 +44,7 @@ export async function POST(request) {
     const formData = await request.formData();
     const file = formData.get('video');
     const userId = formData.get('userId');
-    const requestId = formData.get('requestId');
+    const requestId = formData.get('requestId') || `req_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 
     if (!file) {
       return NextResponse.json(
@@ -93,13 +95,12 @@ export async function POST(request) {
       );
     }
 
-    // Estimate credits needed based on duration
+    // Save uploaded file temporarily
     const uploadDir = ensureUploadDir();
     const fileId = uuidv4();
     const fileExtension = path.extname(file.name) || '.mp4';
     const tempFilePath = path.join(uploadDir, `${fileId}${fileExtension}`);
 
-    // Save uploaded file temporarily
     const arrayBuffer = await file.arrayBuffer();
     const buffer = Buffer.from(arrayBuffer);
     fs.writeFileSync(tempFilePath, buffer);
@@ -120,21 +121,20 @@ export async function POST(request) {
         );
       }
 
-      // Create a temporary URL for the uploaded file
-      const tempUrl = `file://${tempFilePath}`;
+      // Use the existing video analysis function directly
+      console.log(`🎬 Starting analysis of uploaded video: ${file.name}`);
       
-      // Use the existing video analysis logic
-      const analysisResult = await analyzeUploadedVideo(tempFilePath, {
-        userId,
-        requestId,
-        creditsNeeded,
-        originalFilename: file.name
-      });
+      const analysisResult = await analyzeVideo(tempFilePath, userId, creditsNeeded, requestId, 'standard');
 
       // Clean up temp file
       fs.unlinkSync(tempFilePath);
 
-      return NextResponse.json(analysisResult);
+      return NextResponse.json({
+        ...analysisResult,
+        requestId,
+        videoSource: 'upload',
+        originalFilename: file.name
+      });
 
     } catch (error) {
       // Clean up temp file on error
@@ -154,141 +154,4 @@ export async function POST(request) {
       { status: 500 }
     );
   }
-}
-
-// Modified analysis function for uploaded videos
-async function analyzeUploadedVideo(filePath, options) {
-  const { userId, requestId, creditsNeeded, originalFilename } = options;
-  
-  console.log(`🎬 Starting analysis of uploaded video: ${originalFilename}`);
-  
-  try {
-    // Extract frames from the uploaded video
-    const frameExtractDir = path.join(process.cwd(), 'temp', 'frames', requestId);
-    if (!fs.existsSync(frameExtractDir)) {
-      fs.mkdirSync(frameExtractDir, { recursive: true });
-    }
-
-    // Extract frames at 2fps (standard analysis)
-    await new Promise((resolve, reject) => {
-      ffmpeg(filePath)
-        .outputOptions([
-          '-vf', 'fps=2', // 2 frames per second
-          '-q:v', '2'     // High quality
-        ])
-        .output(path.join(frameExtractDir, 'frame_%04d.jpg'))
-        .on('end', resolve)
-        .on('error', reject)
-        .run();
-    });
-
-    // Extract audio for transcription
-    const audioPath = path.join(frameExtractDir, 'audio.wav');
-    await new Promise((resolve, reject) => {
-      ffmpeg(filePath)
-        .outputOptions([
-          '-vn',           // No video
-          '-acodec', 'pcm_s16le', // PCM format
-          '-ar', '16000',  // 16kHz sample rate
-          '-ac', '1'       // Mono
-        ])
-        .output(audioPath)
-        .on('end', resolve)
-        .on('error', reject)
-        .run();
-    });
-
-    // Get list of extracted frames
-    const frameFiles = fs.readdirSync(frameExtractDir)
-      .filter(file => file.startsWith('frame_') && file.endsWith('.jpg'))
-      .sort()
-      .map((file, index) => ({
-        index,
-        path: path.join(frameExtractDir, file),
-        timestamp: index * 0.5 // 2fps = 0.5s intervals
-      }));
-
-    console.log(`🖼️ Extracted ${frameFiles.length} frames for analysis`);
-
-    // Use the existing analysis logic with the extracted frames and audio
-    const result = await performVideoAnalysis({
-      frames: frameFiles,
-      audioPath,
-      userId,
-      requestId,
-      creditsNeeded,
-      videoSource: 'upload',
-      originalFilename
-    });
-
-    // Clean up extracted frames and audio
-    fs.rmSync(frameExtractDir, { recursive: true, force: true });
-
-    return result;
-
-  } catch (error) {
-    console.error('❌ Error analyzing uploaded video:', error);
-    
-    // Clean up on error
-    const frameExtractDir = path.join(process.cwd(), 'temp', 'frames', requestId);
-    if (fs.existsSync(frameExtractDir)) {
-      fs.rmSync(frameExtractDir, { recursive: true, force: true });
-    }
-    
-    throw error;
-  }
-}
-
-// Import the core analysis logic from the main analyze route
-// This would need to be refactored to share code properly
-async function performVideoAnalysis(options) {
-  // This is a placeholder - in a real implementation, you'd refactor
-  // the analysis logic from route.js to be importable and reusable
-  
-  // For now, return a basic structure that matches the expected format
-  return {
-    totalDuration: `${Math.ceil(options.frames.length * 0.5)}s`,
-    hook: "Analysis of uploaded video content",
-    videoCategory: {
-      category: "uploaded_content",
-      confidence: 0.8,
-      reasoning: "Uploaded video file analysis"
-    },
-    scenes: options.frames.map((frame, index) => ({
-      sceneNumber: index + 1,
-      title: `Scene ${index + 1}`,
-      timeRange: `${frame.timestamp}s - ${frame.timestamp + 0.5}s`,
-      duration: '0.5s',
-      description: 'Uploaded video scene analysis',
-      framing: { shotTypes: ['unknown'], cameraMovement: 'unknown', composition: 'unknown' },
-      lighting: { style: 'unknown', mood: 'unknown' },
-      mood: { emotional: 'unknown', atmosphere: 'unknown' },
-      actionMovement: { movement: 'unknown' },
-      audio: { music: 'unknown', dialogue: 'Processing...' },
-      visualEffects: { effects: 'unknown' },
-      settingEnvironment: { location: 'unknown', environment: 'unknown' },
-      subjectsFocus: { main: 'unknown' },
-      intentImpactAnalysis: {
-        creatorIntent: 'Analysis in progress',
-        viewerImpact: 'Determining impact...'
-      }
-    })),
-    hooks: [{
-      timestamp: '0s',
-      type: 'opening_hook',
-      impact: 'medium',
-      description: 'Video opening analysis',
-      element: 'Initial frame analysis'
-    }],
-    transcript: {
-      text: 'Audio transcription in progress...',
-      segments: []
-    },
-    strategicOverview: 'Strategic analysis of uploaded video content',
-    contentStructure: 'Analyzing uploaded video structure...',
-    contextualAnalysis: {
-      creatorIntent: { primaryIntent: 'Content creation' },
-      targetAudience: 'General audience'
-    }
-  };
 } 
