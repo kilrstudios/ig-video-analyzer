@@ -374,6 +374,30 @@ export default function Home() {
     return await response.json();
   };
 
+  const getVideoDurationFromFile = async (file: File): Promise<number> => {
+    return new Promise((resolve, reject) => {
+      const video = document.createElement('video');
+      video.preload = 'metadata';
+      
+      video.onloadedmetadata = () => {
+        window.URL.revokeObjectURL(video.src);
+        const duration = video.duration;
+        if (isNaN(duration) || duration <= 0) {
+          reject(new Error('Could not determine video duration'));
+        } else {
+          resolve(Math.round(duration));
+        }
+      };
+      
+      video.onerror = () => {
+        window.URL.revokeObjectURL(video.src);
+        reject(new Error('Failed to load video metadata'));
+      };
+      
+      video.src = URL.createObjectURL(file);
+    });
+  };
+
   const handleAnalyze = async (urlOrFile: string | File) => {
     if (!user) {
       setShowAuthModal(true);
@@ -564,20 +588,44 @@ export default function Home() {
         return;
       }
       
-      // Estimate credits based on file duration (simplified)
-      const estimatedCredits = Math.ceil(60 / 15); // Assume 60s video = 4 credits
-      setEstimatedCost(estimatedCredits);
-      setShowCostApproval(true);
+      try {
+        // Get actual video duration for accurate credit estimation
+        setError('Getting video duration...');
+        const videoDuration = await getVideoDurationFromFile(uploadedFile);
+        const estimatedCredits = Math.ceil(videoDuration / 15); // 1 credit per 15 seconds
+        setEstimatedCost(estimatedCredits);
+        setError(null); // Clear the loading message
+        setShowCostApproval(true);
+      } catch (err) {
+        console.error('Failed to get video duration:', err);
+        // Fallback to a reasonable estimate based on file size
+        const fileSizeMB = uploadedFile.size / (1024 * 1024);
+        const estimatedCredits = Math.max(1, Math.ceil(fileSizeMB / 5)); // Rough estimate: 5MB ≈ 1 credit
+        setEstimatedCost(estimatedCredits);
+        setError(null);
+        setShowCostApproval(true);
+      }
     } else if (inputMethod === 'fbad') {
       if (!fbAdUrl.trim()) {
         setError('Please enter a Facebook Ad Library URL');
         return;
       }
       
-      // Estimate credits for Facebook ad analysis (similar to regular video)
-      const estimatedCredits = 4; // Assume average ad duration
-      setEstimatedCost(estimatedCredits);
-      setShowCostApproval(true);
+      try {
+        // Try to get actual duration for Facebook ads too
+        setError('Estimating ad duration...');
+        const durationResult = await estimateVideoDuration(fbAdUrl);
+        setEstimatedCost(durationResult.estimatedCredits);
+        setError(null);
+        setShowCostApproval(true);
+      } catch (err) {
+        console.error('Failed to estimate Facebook ad duration:', err);
+        // Fallback: Most Facebook ads are 15-30 seconds
+        const estimatedCredits = 2; // Conservative estimate for 30s ad
+        setEstimatedCost(estimatedCredits);
+        setError(null);
+        setShowCostApproval(true);
+      }
     }
   };
 
