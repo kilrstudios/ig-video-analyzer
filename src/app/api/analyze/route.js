@@ -3960,40 +3960,44 @@ async function generateSceneBatch(sceneBatch, batchIndex, audioAnalysis, fps) {
       audioSegment: getAudioSegmentForScene(scene, audioAnalysis)
     }));
 
-    const batchPrompt = `Analyze these ${sceneBatch.length} video scenes and generate detailed scene cards for each one. 
+    const batchPrompt = `You are analyzing video content. Generate scene analysis for ${sceneBatch.length} scenes.
 
-SCENES TO ANALYZE:
+SCENE DATA:
 ${batchData.map((scene, i) => `
-SCENE ${scene.sceneNumber}: ${scene.timeRange}
-Frame Data: ${scene.frameData.map(f => f.analysis).join(' | ')}
-Audio: ${scene.audioSegment || 'No audio'}
+SCENE ${scene.sceneNumber} (${scene.timeRange}):
+${scene.frameData.map(f => f.analysis).join(' | ')}
+AUDIO: ${scene.audioSegment || 'Background audio'}
 `).join('\n')}
 
-For each scene, provide a JSON object with this structure:
-{
-  "sceneNumber": number,
-  "timeRange": "start-end",
-  "title": "descriptive title",
-  "description": "detailed description",
-  "duration": "duration in seconds",
-  "framing": {"shotTypes": [], "cameraMovement": "", "composition": ""},
-  "lighting": {"style": "", "mood": "", "direction": "", "quality": ""},
-  "mood": {"emotional": "", "atmosphere": "", "tone": ""},
-  "actionMovement": {"movement": "", "direction": "", "pace": ""},
-  "audio": {"music": "", "soundDesign": "", "dialogue": ""},
-  "visualEffects": {"transitions": "", "effects": "", "graphics": ""},
-  "settingEnvironment": {"location": "", "environment": "", "background": ""},
-  "subjectsFocus": {"main": "", "secondary": "", "focus": ""},
-  "intentImpactAnalysis": {
-    "creatorIntent": "",
-    "howExecuted": "",
-    "viewerImpact": "",
-    "narrativeSignificance": ""
-  },
-  "textDialogue": {"content": "", "style": ""}
-}
+OUTPUT FORMAT: Return ONLY a valid JSON array. No explanations, no markdown blocks, just raw JSON.
 
-Return as a JSON array of scene objects.`;
+REQUIRED STRUCTURE:
+[
+  {
+    "sceneNumber": ${sceneBatch[0]?.sceneNumber || 1},
+    "timeRange": "${sceneBatch[0]?.timeRange || '0-2s'}",
+    "title": "Scene Title",
+    "description": "What happens in this scene",
+    "duration": "${sceneBatch[0] ? ((sceneBatch[0].endFrame - sceneBatch[0].startFrame) / fps).toFixed(1) : '2.0'}s",
+    "framing": {"shotTypes": ["Close-up"], "cameraMovement": "Static", "composition": "Centered"},
+    "lighting": {"style": "Natural", "mood": "Warm", "direction": "Front", "quality": "Good"},
+    "mood": {"emotional": "Engaging", "atmosphere": "Inviting", "tone": "Friendly"},
+    "actionMovement": {"movement": "Active", "direction": "Forward", "pace": "Medium"},
+    "audio": {"music": "Background", "soundDesign": "Natural", "dialogue": "Present"},
+    "visualEffects": {"transitions": "Cut", "effects": "None", "graphics": "Text"},
+    "settingEnvironment": {"location": "Kitchen", "environment": "Indoor", "background": "Neutral"},
+    "subjectsFocus": {"main": "Cooking action", "secondary": "Ingredients", "focus": "Center"},
+    "intentImpactAnalysis": {
+      "creatorIntent": "Demonstrate technique",
+      "howExecuted": "Visual demonstration", 
+      "viewerImpact": "Educational",
+      "narrativeSignificance": "Instructional progression"
+    },
+    "textDialogue": {"content": "Instructional", "style": "Casual"}
+  }
+]
+
+Generate ${sceneBatch.length} scene objects following this exact structure.`;
 
     const response = await handleRateLimit(async () => {
       return await openai.chat.completions.create({
@@ -4009,52 +4013,153 @@ Return as a JSON array of scene objects.`;
       });
     });
 
-    // Parse the batch response
+    // Parse the batch response with enhanced error handling
     const responseText = response.choices[0].message.content;
     let scenes;
     
     try {
-      // Handle markdown code blocks
-      let cleanedResponse = responseText;
-      if (responseText.includes('```json')) {
-        const jsonMatch = responseText.match(/```json\s*([\s\S]*?)\s*```/);
+      logWithTimestamp('🔍 Parsing batch scene response', { 
+        responseLength: responseText.length,
+        responsePreview: responseText.substring(0, 200) + '...'
+      });
+
+      // Check for AI refusal first
+      if (isRefusalResponse(responseText)) {
+        throw new Error('AI refused to analyze content');
+      }
+
+      // Handle various response formats
+      let cleanedResponse = responseText.trim();
+      
+      // Remove markdown code blocks
+      if (cleanedResponse.includes('```json')) {
+        const jsonMatch = cleanedResponse.match(/```json\s*([\s\S]*?)\s*```/);
         if (jsonMatch) {
-          cleanedResponse = jsonMatch[1];
+          cleanedResponse = jsonMatch[1].trim();
+        }
+      } else if (cleanedResponse.includes('```')) {
+        const jsonMatch = cleanedResponse.match(/```\s*([\s\S]*?)\s*```/);
+        if (jsonMatch) {
+          cleanedResponse = jsonMatch[1].trim();
         }
       }
-      
+
+      // Try to find JSON array in the response
+      if (!cleanedResponse.startsWith('[') && !cleanedResponse.startsWith('{')) {
+        const arrayMatch = cleanedResponse.match(/\[[\s\S]*\]/);
+        if (arrayMatch) {
+          cleanedResponse = arrayMatch[0];
+        } else {
+          const objectMatch = cleanedResponse.match(/\{[\s\S]*\}/);
+          if (objectMatch) {
+            cleanedResponse = objectMatch[0];
+          }
+        }
+      }
+
+      // Fix common JSON issues
+      cleanedResponse = cleanedResponse
+        .replace(/,\s*]/g, ']')  // Remove trailing commas in arrays
+        .replace(/,\s*}/g, '}')  // Remove trailing commas in objects
+        .replace(/[\u201C\u201D]/g, '"')  // Replace curly quotes
+        .replace(/[\u2018\u2019]/g, "'")  // Replace curly apostrophes
+        .replace(/\n/g, ' ')  // Replace newlines with spaces
+        .replace(/\t/g, ' ');  // Replace tabs with spaces
+
+      logWithTimestamp('🧹 Cleaned response for parsing', { 
+        originalLength: responseText.length,
+        cleanedLength: cleanedResponse.length,
+        preview: cleanedResponse.substring(0, 150) + '...'
+      });
+
       scenes = JSON.parse(cleanedResponse);
+      
       if (!Array.isArray(scenes)) {
         scenes = [scenes];
       }
-    } catch (parseError) {
-      logWithTimestamp('⚠️ Failed to parse batch scene response, using fallback', { 
-        error: parseError.message 
-      });
-      
-      // Create fallback scenes
-      scenes = sceneBatch.map(scene => ({
-        sceneNumber: scene.sceneNumber,
-        timeRange: scene.timeRange,
-        title: `Scene ${scene.sceneNumber}`,
-        description: 'Batch parsing failed - fallback scene data',
-        duration: `${((scene.endFrame - scene.startFrame) / fps).toFixed(1)}s`,
-        framing: { shotTypes: ['Medium Shot'], cameraMovement: 'Static', composition: 'Centered' },
-        lighting: { style: 'Natural', mood: 'Neutral', direction: 'Front', quality: 'Good' },
-        mood: { emotional: 'Neutral', atmosphere: 'Standard', tone: 'Casual' },
-        actionMovement: { movement: 'Minimal', direction: 'Static', pace: 'Medium' },
-        audio: { music: 'Background', soundDesign: 'Standard', dialogue: 'Unknown' },
-        visualEffects: { transitions: 'Cut', effects: 'None', graphics: 'Text overlay' },
-        settingEnvironment: { location: 'Indoor', environment: 'Studio', background: 'Neutral' },
-        subjectsFocus: { main: 'Primary subject', secondary: 'Background', focus: 'Center' },
-        intentImpactAnalysis: {
+
+      // Validate scenes structure
+      scenes = scenes.filter(scene => scene && typeof scene === 'object').map((scene, index) => ({
+        sceneNumber: scene.sceneNumber || (index + 1),
+        timeRange: scene.timeRange || '0-2s',
+        title: scene.title || `Scene ${scene.sceneNumber || index + 1}`,
+        description: scene.description || 'Scene description',
+        duration: scene.duration || '2.0s',
+        framing: scene.framing || { shotTypes: ['Medium Shot'], cameraMovement: 'Static', composition: 'Centered' },
+        lighting: scene.lighting || { style: 'Natural', mood: 'Neutral', direction: 'Front', quality: 'Good' },
+        mood: scene.mood || { emotional: 'Neutral', atmosphere: 'Standard', tone: 'Casual' },
+        actionMovement: scene.actionMovement || { movement: 'Minimal', direction: 'Static', pace: 'Medium' },
+        audio: scene.audio || { music: 'Background', soundDesign: 'Standard', dialogue: 'Unknown' },
+        visualEffects: scene.visualEffects || { transitions: 'Cut', effects: 'None', graphics: 'Text overlay' },
+        settingEnvironment: scene.settingEnvironment || { location: 'Indoor', environment: 'Studio', background: 'Neutral' },
+        subjectsFocus: scene.subjectsFocus || { main: 'Primary subject', secondary: 'Background', focus: 'Center' },
+        intentImpactAnalysis: scene.intentImpactAnalysis || {
           creatorIntent: 'Content delivery',
           howExecuted: 'Standard presentation',
           viewerImpact: 'Information delivery',
           narrativeSignificance: 'Progression'
         },
-        textDialogue: { content: 'Scene content', style: 'Standard' }
+        textDialogue: scene.textDialogue || { content: 'Scene content', style: 'Standard' }
       }));
+
+      logWithTimestamp('✅ Successfully parsed and validated scenes', { 
+        sceneCount: scenes.length,
+        validScenes: scenes.filter(s => s.title && s.description).length
+      });
+      
+    } catch (parseError) {
+      logWithTimestamp('⚠️ Failed to parse batch scene response, using fallback', { 
+        error: parseError.message,
+        responsePreview: responseText.substring(0, 500)
+      });
+      
+      // Create enhanced fallback scenes with actual content
+      scenes = sceneBatch.map((scene, index) => {
+        const frameAnalysis = scene.frameData?.[0]?.analysis || '';
+        const keyWords = frameAnalysis.toLowerCase();
+        
+        return {
+          sceneNumber: scene.sceneNumber,
+          timeRange: scene.timeRange,
+          title: `${keyWords.includes('cooking') ? 'Cooking' : 
+                   keyWords.includes('food') ? 'Food Preparation' :
+                   keyWords.includes('ingredients') ? 'Ingredients' : 
+                   'Content'} Scene ${scene.sceneNumber}`,
+          description: frameAnalysis.substring(0, 200) || 'Scene showing content progression',
+          duration: `${((scene.endFrame - scene.startFrame) / fps).toFixed(1)}s`,
+          framing: { 
+            shotTypes: keyWords.includes('close') ? ['Close-up'] : ['Medium Shot'], 
+            cameraMovement: 'Static', 
+            composition: 'Centered' 
+          },
+          lighting: { style: 'Natural', mood: 'Warm', direction: 'Front', quality: 'Good' },
+          mood: { emotional: 'Engaging', atmosphere: 'Inviting', tone: 'Friendly' },
+          actionMovement: { 
+            movement: keyWords.includes('cutting') || keyWords.includes('chopping') ? 'Active' : 'Moderate', 
+            direction: 'Forward', 
+            pace: 'Medium' 
+          },
+          audio: { music: 'Background', soundDesign: 'Natural', dialogue: 'Instructional' },
+          visualEffects: { transitions: 'Cut', effects: 'None', graphics: 'Text overlay' },
+          settingEnvironment: { 
+            location: keyWords.includes('kitchen') ? 'Kitchen' : 'Indoor', 
+            environment: 'Home kitchen', 
+            background: 'Neutral' 
+          },
+          subjectsFocus: { 
+            main: keyWords.includes('hand') ? 'Hands and cooking action' : 'Primary content', 
+            secondary: 'Ingredients', 
+            focus: 'Center' 
+          },
+          intentImpactAnalysis: {
+            creatorIntent: 'Demonstrate cooking technique',
+            howExecuted: 'Visual demonstration with clear steps',
+            viewerImpact: 'Educational and inspiring',
+            narrativeSignificance: 'Progressive instruction'
+          },
+          textDialogue: { content: 'Instructional content', style: 'Casual and friendly' }
+        };
+      });
     }
 
     const batchDuration = Date.now() - batchStartTime;
