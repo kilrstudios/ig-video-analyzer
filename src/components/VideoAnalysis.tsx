@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import StandardizedAnalysis from './StandardizedAnalysis';
 
 interface Scene {
   sceneNumber: number;
@@ -190,6 +191,7 @@ interface VideoAnalysis {
   contextualAnalysis: ContextualAnalysis;
   videoMetadata: VideoMetadata;
   strategicOverview?: string | StrategicOverview;
+  standardizedAnalysis?: string;
   isFreeAnalysis?: boolean;
   analysisMethod?: string;
   isDemoMode?: boolean;
@@ -203,7 +205,7 @@ interface VideoAnalysisProps {
 
 export default function VideoAnalysis({ results, onCopyMarkdown, isCopying }: VideoAnalysisProps) {
   const [selectedScene, setSelectedScene] = useState<Scene | null>(null);
-  const [activeTab, setActiveTab] = useState<'overview' | 'scenes' | 'hooks' | 'transcript'>('overview');
+  const [activeTab, setActiveTab] = useState<'standardized' | 'overview' | 'scenes' | 'hooks' | 'transcript'>(results.standardizedAnalysis ? 'standardized' : 'overview');
 
   return (
     <div className="space-y-8">
@@ -238,9 +240,10 @@ export default function VideoAnalysis({ results, onCopyMarkdown, isCopying }: Vi
         {/* Tab Navigation */}
         <div className="flex space-x-1 mb-6 bg-gray-100 p-1 rounded-lg">
           {[
+            ...(results.standardizedAnalysis ? [{ id: 'standardized', label: '🎯 Creator Strategy', icon: '🎯' }] : []),
             { id: 'overview', label: '📋 Overview', icon: '📋' },
             { id: 'scenes', label: '🎬 Scenes', icon: '🎬' },
-            { id: 'hooks', label: '🎯 Hooks', icon: '🎯' },
+            { id: 'hooks', label: '🔗 Hooks', icon: '🔗' },
             { id: 'transcript', label: '📝 Transcript', icon: '📝' }
           ].map((tab) => (
             <button
@@ -258,6 +261,14 @@ export default function VideoAnalysis({ results, onCopyMarkdown, isCopying }: Vi
         </div>
 
         {/* Tab Content */}
+        {activeTab === 'standardized' && results.standardizedAnalysis && (
+          <StandardizedAnalysis 
+            analysis={results.standardizedAnalysis}
+            onCopyMarkdown={onCopyMarkdown}
+            isCopying={isCopying}
+          />
+        )}
+
         {activeTab === 'overview' && (
           <div className="space-y-6">
             {/* Video Category */}
@@ -289,38 +300,33 @@ export default function VideoAnalysis({ results, onCopyMarkdown, isCopying }: Vi
                       const lines = results.strategicOverview.split('\n');
                       const sections: JSX.Element[] = [];
                       
-                      interface SectionData {
+                      // Process sections with a simpler approach
+                      const processedSections: Array<{
                         title: string;
                         content: string[];
                         bgColor: string;
                         textColor: string;
                         borderColor: string;
-                      }
+                      }> = [];
                       
-                      let currentSection: SectionData | null = null;
-                      let mainHeading: string | null = null;
+                      let currentSection: {
+                        title: string;
+                        content: string[];
+                        bgColor: string;
+                        textColor: string;
+                        borderColor: string;
+                      } | null = null;
 
                       lines.forEach((line, index) => {
                         // Handle main headings (##)
                         if (line.startsWith('## ')) {
                           // Close previous section if exists
                           if (currentSection) {
-                            sections.push(
-                              <div key={`section-${sections.length}`} className={`${currentSection.bgColor} rounded-lg p-4 mt-6 mb-4 border-l-4 ${currentSection.borderColor} section-card`}>
-                                <h3 className={`font-semibold ${currentSection.textColor} mb-3 text-lg`}>
-                                  {currentSection.title}
-                                </h3>
-                                <div className="section-content">
-                                  {currentSection.content.map((contentLine, contentIndex) => (
-                                    <div key={contentIndex} dangerouslySetInnerHTML={{ __html: contentLine }} />
-                                  ))}
-                                </div>
-                              </div>
-                            );
+                            processedSections.push(currentSection);
                             currentSection = null;
                           }
 
-                          mainHeading = line.replace('## ', '');
+                          const mainHeading = line.replace('## ', '');
                           sections.push(
                             <h2 key={`heading-${index}`} className="text-xl font-bold text-gray-900 mt-8 mb-4 pb-2 border-b-2 border-blue-200 flex items-center">
                               <span className="bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
@@ -335,18 +341,7 @@ export default function VideoAnalysis({ results, onCopyMarkdown, isCopying }: Vi
                         if (line.startsWith('### ')) {
                           // Close previous section if exists
                           if (currentSection) {
-                            sections.push(
-                              <div key={`section-${sections.length}`} className={`${currentSection.bgColor} rounded-lg p-4 mt-6 mb-4 border-l-4 ${currentSection.borderColor} section-card`}>
-                                <h3 className={`font-semibold ${currentSection.textColor} mb-3 text-lg`}>
-                                  {currentSection.title}
-                                </h3>
-                                <div className="section-content">
-                                  {currentSection.content.map((contentLine, contentIndex) => (
-                                    <div key={contentIndex} dangerouslySetInnerHTML={{ __html: contentLine }} />
-                                  ))}
-                                </div>
-                              </div>
-                            );
+                            processedSections.push(currentSection);
                           }
 
                           const title = line.replace('### ', '');
@@ -417,19 +412,24 @@ export default function VideoAnalysis({ results, onCopyMarkdown, isCopying }: Vi
 
                       // Close final section if exists
                       if (currentSection) {
+                        processedSections.push(currentSection);
+                      }
+
+                      // Render all processed sections
+                      processedSections.forEach((section, index) => {
                         sections.push(
-                          <div key={`section-${sections.length}`} className={`${currentSection.bgColor} rounded-lg p-4 mt-6 mb-4 border-l-4 ${currentSection.borderColor} section-card`}>
-                            <h3 className={`font-semibold ${currentSection.textColor} mb-3 text-lg`}>
-                              {currentSection.title}
+                          <div key={`section-${index}`} className={`${section.bgColor} rounded-lg p-4 mt-6 mb-4 border-l-4 ${section.borderColor} section-card`}>
+                            <h3 className={`font-semibold ${section.textColor} mb-3 text-lg`}>
+                              {section.title}
                             </h3>
                             <div className="section-content">
-                              {currentSection.content.map((contentLine: string, contentIndex: number) => (
+                              {section.content.map((contentLine: string, contentIndex: number) => (
                                 <div key={contentIndex} dangerouslySetInnerHTML={{ __html: contentLine }} />
                               ))}
                             </div>
                           </div>
                         );
-                      }
+                      });
 
                       return sections;
                     })()}
