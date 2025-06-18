@@ -258,11 +258,23 @@ async function downloadVideo(url) {
         try {
           const cookiesContent = fs.readFileSync('./instagram_cookies.txt', 'utf8');
           const lines = cookiesContent.split('\n');
-          return lines.some(line => {
+          // Look for lines that don't start with # and contain actual cookie data
+          const activeCookieLines = lines.filter(line => {
             const trimmed = line.trim();
-            return trimmed && !trimmed.startsWith('#') && trimmed.includes('\t');
+            return trimmed && 
+                   !trimmed.startsWith('#') && 
+                   !trimmed.startsWith('//') &&
+                   trimmed.includes('\t') &&
+                   trimmed.split('\t').length >= 6; // Netscape format has at least 6 tab-separated fields
           });
-        } catch {
+          logWithTimestamp('🍪 Cookies file check', { 
+            totalLines: lines.length,
+            activeCookieLines: activeCookieLines.length,
+            hasCookies: activeCookieLines.length > 0
+          });
+          return activeCookieLines.length > 0;
+        } catch (error) {
+          logWithTimestamp('⚠️ Failed to read cookies file', { error: error.message });
           return false;
         }
       };

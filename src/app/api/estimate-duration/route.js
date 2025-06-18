@@ -28,11 +28,23 @@ export async function POST(request) {
           const fs = require('fs');
           const cookiesContent = fs.readFileSync('./instagram_cookies.txt', 'utf8');
           const lines = cookiesContent.split('\n');
-          return lines.some(line => {
+          // Look for lines that don't start with # and contain actual cookie data
+          const activeCookieLines = lines.filter(line => {
             const trimmed = line.trim();
-            return trimmed && !trimmed.startsWith('#') && trimmed.includes('\t');
+            return trimmed && 
+                   !trimmed.startsWith('#') && 
+                   !trimmed.startsWith('//') &&
+                   trimmed.includes('\t') &&
+                   trimmed.split('\t').length >= 6; // Netscape format has at least 6 tab-separated fields
           });
-        } catch {
+          console.log('🍪 Cookies file check', { 
+            totalLines: lines.length,
+            activeCookieLines: activeCookieLines.length,
+            hasCookies: activeCookieLines.length > 0
+          });
+          return activeCookieLines.length > 0;
+        } catch (error) {
+          console.log('⚠️ Failed to read cookies file', { error: error.message });
           return false;
         }
       };
