@@ -1,48 +1,68 @@
-# Base image: Use an official Node.js image. We'll use a specific version for reproducibility.
-# The 'bookworm' version is based on Debian 12, which is stable and secure.
-FROM node:20-bookworm-slim
+# Use the official Node.js runtime as the base image
+FROM node:18-bullseye-slim
 
-# Install Python and FFmpeg, which are necessary for video processing with yt-dlp.
-# We also install 'procps' which helps with process management and debugging.
-# Using --no-install-recommends keeps the image size smaller.
-RUN apt-get update && apt-get install -y --no-install-recommends python3 python3-pip ffmpeg procps && \
-    # Clean up apt cache to reduce image size.
-    rm -rf /var/lib/apt/lists/*
+# Install dependencies for Chrome
+RUN apt-get update && apt-get install -y \
+    wget \
+    gnupg \
+    ca-certificates \
+    procps \
+    libxss1 \
+    libgconf-2-4 \
+    libxtst6 \
+    libxrandr2 \
+    libasound2 \
+    libpangocairo-1.0-0 \
+    libatk1.0-0 \
+    libcairo-gobject2 \
+    libgtk-3-0 \
+    libgdk-pixbuf2.0-0 \
+    libxcomposite1 \
+    libxcursor1 \
+    libxdamage1 \
+    libxfixes3 \
+    libxinerama1 \
+    libxi6 \
+    libxrender1 \
+    libcups2 \
+    libdbus-1-3 \
+    libdrm2 \
+    libxkbcommon0 \
+    libxrandr2 \
+    libgbm1 \
+    libgtk-3-0 \
+    libnss3 \
+    fonts-liberation \
+    --no-install-recommends
 
-# Install yt-dlp using pip.
-# The --break-system-packages flag is required on newer Debian-based images
-# to confirm that we want to install this package system-wide.
-RUN pip3 install --no-cache-dir --break-system-packages yt-dlp
+# Install Chrome directly
+RUN wget -q -O - https://dl.google.com/linux/linux_signing_key.pub | apt-key add - \
+    && echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" >> /etc/apt/sources.list.d/google-chrome.list \
+    && apt-get update \
+    && apt-get install -y google-chrome-stable \
+    && rm -rf /var/lib/apt/lists/*
 
-# Set the working directory inside the container.
+# Set environment variables for Puppeteer
+ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true \
+    PUPPETEER_EXECUTABLE_PATH=/usr/bin/google-chrome-stable
+
+# Set working directory
 WORKDIR /app
 
-# Add a non-root user for security purposes.
-# Running as a non-root user is a security best practice.
-RUN addgroup --system --gid 1001 nextjs
-RUN adduser --system --uid 1001 nextjs
+# Copy package files
+COPY package*.json ./
 
-# Copy dependency definition files.
-COPY --chown=nextjs:nextjs package.json package-lock.json* ./
+# Install dependencies
+RUN npm ci --only=production
 
-# Install dependencies.
-RUN npm ci
-
-# Copy the rest of the application code.
-COPY --chown=nextjs:nextjs . .
-
-# Set build-time argument for OpenAI API key
-ARG OPENAI_API_KEY
-ENV OPENAI_API_KEY=${OPENAI_API_KEY}
+# Copy application code
+COPY . .
 
 # Build the application
 RUN npm run build
 
-# Switch to the non-root user for running the application.
-USER nextjs
-
-# Expose the port the app runs on.
+# Expose port
 EXPOSE 3000
 
-# Start the application.
+# Start the application
 CMD ["npm", "start"] 

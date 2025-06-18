@@ -6,7 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "postinstall": "npx puppeteer browsers install chrome || echo 'Chrome installation failed - will use system Chrome'"
   },
   "dependencies": {
     "@google-cloud/storage": "^7.9.0",

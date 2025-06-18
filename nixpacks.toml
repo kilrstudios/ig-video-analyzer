@@ -1,0 +1,18 @@
+[phases.setup]
+nixPkgs = ["chromium", "fontconfig", "dejavu_fonts"]
+
+[phases.build]
+cmds = [
+  "npm install",
+  "npx puppeteer browsers install chrome",
+  "npm run build"
+]
+
+[start]
+cmd = "npm start"
+
+[variables]
+PUPPETEER_EXECUTABLE_PATH = "/nix/store/*chromium*/bin/chromium"
+PUPPETEER_SKIP_CHROMIUM_DOWNLOAD = "true"
+CHROME_BIN = "/nix/store/*chromium*/bin/chromium"
+FONTCONFIG_PATH = "/nix/store/*fontconfig*/etc/fonts" 
