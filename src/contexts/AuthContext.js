@@ -90,25 +90,8 @@ export const AuthProvider = ({ children }) => {
         // Use current user object or passed userObj
         const currentUser = userObj || user
         
-        // Auto-create profile with starter credits if not found
-        const { data: newProfile, error: insertErr } = await supabase
-          .from('user_profiles')
-          .insert({ 
-            id: userId, 
-            email: currentUser?.email || 'unknown@example.com',
-            full_name: currentUser?.user_metadata?.full_name || currentUser?.email || 'User',
-            credits_balance: 10 
-          })
-          .select()
-          .single()
-        if (insertErr) {
-          console.error('Failed to auto-create profile', insertErr)
-          // Set a default profile if creation fails
-          profileData = { id: userId, credits_balance: 10 }
-        } else {
-          console.log('Created new profile:', newProfile)
-          profileData = newProfile
-        }
+        // Enhanced profile creation with better error handling and retry logic
+        profileData = await createUserProfileWithRetry(userId, currentUser)
       }
       
       console.log('Setting profile:', profileData)
@@ -117,6 +100,99 @@ export const AuthProvider = ({ children }) => {
       console.error('Error loading user profile:', error)
       // Set a default profile if everything fails
       setProfile({ id: userId, credits_balance: 10 })
+    }
+  }
+
+  // Enhanced profile creation function with retry logic
+  const createUserProfileWithRetry = async (userId, userObj, maxRetries = 3) => {
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        console.log(`Attempting to create user profile (attempt ${attempt}/${maxRetries})`)
+        
+        const profileData = {
+          id: userId,
+          email: userObj?.email || 'unknown@example.com',
+          full_name: userObj?.user_metadata?.full_name || userObj?.email?.split('@')[0] || 'User',
+          credits_balance: 10  // Always 10 credits for new users
+        }
+        
+        console.log('Creating profile with data:', profileData)
+        
+        // Try to insert the profile
+        const { data: newProfile, error: insertErr } = await supabase
+          .from('user_profiles')
+          .insert(profileData)
+          .select()
+          .single()
+          
+        if (insertErr) {
+          console.error(`Profile creation attempt ${attempt} failed:`, insertErr)
+          
+          // If it's a duplicate key error, the profile might already exist
+          if (insertErr.code === '23505' || insertErr.message?.includes('duplicate')) {
+            console.log('Profile might already exist, trying to fetch it...')
+            const { data: existingProfile, error: fetchErr } = await supabase
+              .from('user_profiles')
+              .select('*')
+              .eq('id', userId)
+              .single()
+              
+            if (!fetchErr && existingProfile) {
+              console.log('Found existing profile:', existingProfile)
+              return existingProfile
+            }
+          }
+          
+          // If this is the last attempt, throw the error
+          if (attempt === maxRetries) {
+            throw insertErr
+          }
+          
+          // Wait before retrying
+          await new Promise(resolve => setTimeout(resolve, 1000 * attempt))
+          continue
+        }
+        
+        console.log('Profile created successfully:', newProfile)
+        
+        // Also try to create welcome bonus transaction (but don't fail if it doesn't work)
+        try {
+          const { error: transactionErr } = await supabase
+            .from('credit_transactions')
+            .insert({
+              user_id: userId,
+              transaction_type: 'bonus',
+              credits_amount: 10,
+              description: 'Welcome bonus - 10 free credits'
+            })
+          
+          if (transactionErr) {
+            console.warn('Failed to create welcome transaction (non-critical):', transactionErr)
+          } else {
+            console.log('Welcome bonus transaction created')
+          }
+        } catch (transErr) {
+          console.warn('Welcome transaction creation failed (non-critical):', transErr)
+        }
+        
+        return newProfile
+        
+      } catch (error) {
+        console.error(`Profile creation attempt ${attempt} failed:`, error)
+        
+        if (attempt === maxRetries) {
+          console.error('All profile creation attempts failed, returning fallback profile')
+          return { 
+            id: userId, 
+            email: userObj?.email || 'unknown@example.com',
+            full_name: userObj?.user_metadata?.full_name || 'User',
+            credits_balance: 10 
+          }
+        }
+        
+        // Wait before retrying
+        await new Promise(resolve => setTimeout(resolve, 1000 * attempt))
+      }
     }
   }
 
@@ -170,17 +246,39 @@ export const AuthProvider = ({ children }) => {
     const redirectUrl = getRedirectUrl()
     console.log('Using redirect URL for signup:', redirectUrl)
     
-    const { data, error } = await supabase.auth.signUp({
-      email,
-      password,
-      options: {
-        data: {
-          full_name: fullName,
-        },
-        emailRedirectTo: redirectUrl
+    try {
+      const { data, error } = await supabase.auth.signUp({
+        email,
+        password,
+        options: {
+          data: {
+            full_name: fullName,
+          },
+          emailRedirectTo: redirectUrl
+        }
+      })
+      
+      console.log('Signup response:', { data, error })
+      
+      // If signup was successful but user needs email confirmation, 
+      // we'll handle profile creation when they confirm and sign in
+      if (data?.user && !error) {
+        console.log('User signed up successfully:', data.user.email)
+        
+        // If the user is immediately confirmed (some setups do this), create profile
+        if (data.user.email_confirmed_at) {
+          console.log('User is immediately confirmed, creating profile...')
+          await createUserProfileWithRetry(data.user.id, data.user)
+        } else {
+          console.log('User needs email confirmation, profile will be created on first signin')
+        }
       }
-    })
-    return { data, error }
+      
+      return { data, error }
+    } catch (signupError) {
+      console.error('Signup error:', signupError)
+      return { error: signupError }
+    }
   }
 
   const signOut = async () => {
