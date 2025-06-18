@@ -3952,52 +3952,95 @@ async function generateSceneBatch(sceneBatch, batchIndex, audioAnalysis, fps) {
   });
 
   try {
-    // Prepare batch data
-    const batchData = sceneBatch.map((scene, index) => ({
-      sceneNumber: scene.sceneNumber,
-      timeRange: scene.timeRange,
-      frameData: scene.frameData?.slice(0, 3) || [], // Limit to 3 frames per scene for token efficiency
-      audioSegment: getAudioSegmentForScene(scene, audioAnalysis)
-    }));
+    // Prepare batch data with proper mapping and scene numbers
+    const batchData = sceneBatch.map((scene, index) => {
+      // Add scene number and time range if missing
+      const sceneNumber = scene.sceneNumber || (index + 1);
+      const startTime = (scene.startFrame / fps).toFixed(1);
+      const endTime = (scene.endFrame / fps).toFixed(1);
+      const timeRange = `${startTime}-${endTime}s`;
+      
+      // Map frames to frameData (the actual frame analysis data)
+      const frameData = (scene.frames || scene.frameData || []).slice(0, 3); // Limit to 3 frames for efficiency
+      
+      return {
+        sceneNumber,
+        timeRange,
+        frameData,
+        audioSegment: getAudioSegmentForScene(scene, audioAnalysis)
+      };
+    });
 
-    const batchPrompt = `You are analyzing video content. Generate scene analysis for ${sceneBatch.length} scenes.
+    // First validate that we have actual frame data
+    const hasValidFrameData = batchData.some(scene => 
+      scene.frameData && scene.frameData.length > 0 && 
+      scene.frameData.some(f => f.analysis && f.analysis.length > 50)
+    );
 
-SCENE DATA:
+    if (!hasValidFrameData) {
+      throw new Error('No valid frame data available for scene analysis');
+    }
+
+    // Log what data we're actually sending
+    logWithTimestamp('📋 Scene batch data being analyzed', {
+      sceneCount: batchData.length,
+      frameDataSample: batchData[0]?.frameData?.[0]?.analysis?.substring(0, 100) + '...',
+      hasAudio: !!audioAnalysis?.transcription?.text,
+      sampleSceneData: {
+        sceneNumber: batchData[0]?.sceneNumber,
+        timeRange: batchData[0]?.timeRange,
+        frameCount: batchData[0]?.frameData?.length,
+        firstFrameAnalysis: batchData[0]?.frameData?.[0]?.analysis?.substring(0, 200) + '...'
+      }
+    });
+
+    const batchPrompt = `ANALYZE THESE SPECIFIC VIDEO SCENES - You must base your analysis ONLY on the provided frame descriptions and audio data.
+
+CRITICAL: Do NOT make up content. Use ONLY the frame analysis data provided below.
+
+VIDEO SCENES TO ANALYZE:
 ${batchData.map((scene, i) => `
-SCENE ${scene.sceneNumber} (${scene.timeRange}):
-${scene.frameData.map(f => f.analysis).join(' | ')}
-AUDIO: ${scene.audioSegment || 'Background audio'}
+━━━ SCENE ${scene.sceneNumber} (${scene.timeRange}) ━━━
+VISUAL CONTENT: ${scene.frameData.map(f => f.analysis).join(' → ')}
+AUDIO CONTENT: ${scene.audioSegment || 'No specific audio for this timeframe'}
 `).join('\n')}
 
-OUTPUT FORMAT: Return ONLY a valid JSON array. No explanations, no markdown blocks, just raw JSON.
+OVERALL VIDEO CONTEXT:
+${audioAnalysis?.transcription?.text ? `TRANSCRIPT: "${audioAnalysis.transcription.text.substring(0, 300)}..."` : 'No transcript available'}
 
-REQUIRED STRUCTURE:
+INSTRUCTIONS: 
+1. Analyze ONLY what is described in the frame data above
+2. Create realistic scene descriptions based on the actual visual content
+3. DO NOT invent fictional scenarios like "morning routines" or "cityscapes"
+4. Focus on what is actually happening in the provided frame descriptions
+
+OUTPUT: Return ONLY valid JSON array with this structure:
 [
   {
-    "sceneNumber": ${sceneBatch[0]?.sceneNumber || 1},
-    "timeRange": "${sceneBatch[0]?.timeRange || '0-2s'}",
-    "title": "Scene Title",
-    "description": "What happens in this scene",
-    "duration": "${sceneBatch[0] ? ((sceneBatch[0].endFrame - sceneBatch[0].startFrame) / fps).toFixed(1) : '2.0'}s",
-    "framing": {"shotTypes": ["Close-up"], "cameraMovement": "Static", "composition": "Centered"},
-    "lighting": {"style": "Natural", "mood": "Warm", "direction": "Front", "quality": "Good"},
-    "mood": {"emotional": "Engaging", "atmosphere": "Inviting", "tone": "Friendly"},
-    "actionMovement": {"movement": "Active", "direction": "Forward", "pace": "Medium"},
-    "audio": {"music": "Background", "soundDesign": "Natural", "dialogue": "Present"},
-    "visualEffects": {"transitions": "Cut", "effects": "None", "graphics": "Text"},
-    "settingEnvironment": {"location": "Kitchen", "environment": "Indoor", "background": "Neutral"},
-    "subjectsFocus": {"main": "Cooking action", "secondary": "Ingredients", "focus": "Center"},
+    "sceneNumber": [number],
+    "timeRange": "[start-end]s", 
+    "title": "[Descriptive title based on actual frame content]",
+    "description": "[What actually happens based on frame data - 100-150 chars]",
+    "duration": "[X.X]s",
+    "framing": {"shotTypes": ["type"], "cameraMovement": "movement", "composition": "style"},
+    "lighting": {"style": "style", "mood": "mood", "direction": "direction", "quality": "quality"},
+    "mood": {"emotional": "emotion", "atmosphere": "atmosphere", "tone": "tone"},
+    "actionMovement": {"movement": "type", "direction": "direction", "pace": "pace"},
+    "audio": {"music": "type", "soundDesign": "style", "dialogue": "content"},
+    "visualEffects": {"transitions": "type", "effects": "effects", "graphics": "graphics"},
+    "settingEnvironment": {"location": "location", "environment": "environment", "background": "background"},
+    "subjectsFocus": {"main": "main_subject", "secondary": "secondary", "focus": "focus_area"},
     "intentImpactAnalysis": {
-      "creatorIntent": "Demonstrate technique",
-      "howExecuted": "Visual demonstration", 
-      "viewerImpact": "Educational",
-      "narrativeSignificance": "Instructional progression"
+      "creatorIntent": "intent_based_on_content",
+      "howExecuted": "execution_method", 
+      "viewerImpact": "impact_type",
+      "narrativeSignificance": "narrative_role"
     },
-    "textDialogue": {"content": "Instructional", "style": "Casual"}
+    "textDialogue": {"content": "dialogue_content", "style": "delivery_style"}
   }
 ]
 
-Generate ${sceneBatch.length} scene objects following this exact structure.`;
+IMPORTANT: Base all descriptions on the actual frame content provided above. Do not create fictional content.`;
 
     const response = await handleRateLimit(async () => {
       return await openai.chat.completions.create({
@@ -4113,20 +4156,28 @@ Generate ${sceneBatch.length} scene objects following this exact structure.`;
         responsePreview: responseText.substring(0, 500)
       });
       
-      // Create enhanced fallback scenes with actual content
-      scenes = sceneBatch.map((scene, index) => {
+      // Create enhanced fallback scenes with actual content from the batch data
+      scenes = batchData.map((scene, index) => {
         const frameAnalysis = scene.frameData?.[0]?.analysis || '';
         const keyWords = frameAnalysis.toLowerCase();
+        
+        // Extract key content indicators from frame analysis
+        const isKitchen = keyWords.includes('kitchen') || keyWords.includes('cooking') || keyWords.includes('stove');
+        const isFood = keyWords.includes('food') || keyWords.includes('ingredients') || keyWords.includes('pan');
+        const isCutting = keyWords.includes('cutting') || keyWords.includes('chopping') || keyWords.includes('knife');
+        const isClose = keyWords.includes('close') || keyWords.includes('detail');
         
         return {
           sceneNumber: scene.sceneNumber,
           timeRange: scene.timeRange,
-          title: `${keyWords.includes('cooking') ? 'Cooking' : 
-                   keyWords.includes('food') ? 'Food Preparation' :
-                   keyWords.includes('ingredients') ? 'Ingredients' : 
-                   'Content'} Scene ${scene.sceneNumber}`,
-          description: frameAnalysis.substring(0, 200) || 'Scene showing content progression',
-          duration: `${((scene.endFrame - scene.startFrame) / fps).toFixed(1)}s`,
+          title: `${isCutting ? 'Ingredient Preparation' : 
+                   isFood ? 'Food Cooking' :
+                   isKitchen ? 'Kitchen Scene' : 
+                   'Video Content'} ${scene.sceneNumber}`,
+          description: frameAnalysis.substring(0, 200) || 'Scene showing video content progression',
+          duration: scene.timeRange.includes('-') ? 
+            scene.timeRange.split('-')[1] : 
+            '2.0s',
           framing: { 
             shotTypes: keyWords.includes('close') ? ['Close-up'] : ['Medium Shot'], 
             cameraMovement: 'Static', 
