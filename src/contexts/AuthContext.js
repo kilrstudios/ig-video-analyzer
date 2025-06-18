@@ -105,9 +105,26 @@ export const AuthProvider = ({ children }) => {
 
   // Enhanced profile creation function with retry logic
   const createUserProfileWithRetry = async (userId, userObj, maxRetries = 3) => {
+    // First, double-check if profile already exists (avoid conflicts)
+    try {
+      console.log('🔍 Double-checking if profile already exists before creation...')
+      const { data: existingCheck, error: checkErr } = await supabase
+        .from('user_profiles')
+        .select('*')
+        .eq('id', userId)
+        .maybeSingle()
+      
+      if (existingCheck) {
+        console.log('✅ Profile already exists, skipping creation:', existingCheck)
+        return existingCheck
+      }
+    } catch (checkError) {
+      console.log('Profile existence check failed, proceeding with creation:', checkError)
+    }
+
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
       try {
-        console.log(`Attempting to create user profile (attempt ${attempt}/${maxRetries})`)
+        console.log(`🆕 Attempting to create user profile (attempt ${attempt}/${maxRetries})`)
         
         const profileData = {
           id: userId,
@@ -116,7 +133,7 @@ export const AuthProvider = ({ children }) => {
           credits_balance: 10  // Always 10 credits for new users
         }
         
-        console.log('Creating profile with data:', profileData)
+        console.log('📝 Creating profile with data:', profileData)
         
         // Try to insert the profile
         const { data: newProfile, error: insertErr } = await supabase
@@ -128,9 +145,16 @@ export const AuthProvider = ({ children }) => {
         if (insertErr) {
           console.error(`Profile creation attempt ${attempt} failed:`, insertErr)
           
-          // If it's a duplicate key error, the profile might already exist
-          if (insertErr.code === '23505' || insertErr.message?.includes('duplicate')) {
-            console.log('Profile might already exist, trying to fetch it...')
+          // If it's a duplicate key error or conflict (409), the profile already exists
+          if (insertErr.code === '23505' || 
+              insertErr.message?.includes('duplicate') ||
+              insertErr.message?.includes('conflict') ||
+              insertErr.status === 409) {
+            console.log('Profile already exists (conflict detected), fetching existing profile...')
+            
+            // Wait a moment for any trigger-created profile to be fully committed
+            await new Promise(resolve => setTimeout(resolve, 500))
+            
             const { data: existingProfile, error: fetchErr } = await supabase
               .from('user_profiles')
               .select('*')
@@ -138,8 +162,10 @@ export const AuthProvider = ({ children }) => {
               .single()
               
             if (!fetchErr && existingProfile) {
-              console.log('Found existing profile:', existingProfile)
+              console.log('✅ Found existing profile after conflict:', existingProfile)
               return existingProfile
+            } else {
+              console.warn('Conflict detected but could not fetch existing profile:', fetchErr)
             }
           }
           
