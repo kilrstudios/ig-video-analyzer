@@ -4,17 +4,12 @@ import fs from 'fs';
 import { exec } from 'child_process';
 import { promisify } from 'util';
 import { v4 as uuidv4 } from 'uuid';
-import { createClient } from '@supabase/supabase-js';
+import { isSupabaseAvailable, getUserProfile, updateUserCredits, supabase } from '@/lib/supabase';
 
 // Import the existing analysis logic
 import { analyzeVideo } from '../analyze/route.js';
 
 const execAsync = promisify(exec);
-
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL,
-  process.env.SUPABASE_SERVICE_ROLE_KEY
-);
 
 // Helper function to ensure upload directory exists
 function ensureUploadDir() {
@@ -80,68 +75,109 @@ export async function POST(request) {
 
     console.log(`📁 Processing uploaded file: ${file.name} (${(file.size / 1024 / 1024).toFixed(1)}MB)`);
 
-    // Check user credits
-    const { data: profile, error: profileError } = await supabase
-      .from('user_profiles')
-      .select('credits_balance')
-      .eq('user_id', userId)
-      .single();
+    // Check user credits if Supabase is available
+    if (isSupabaseAvailable()) {
+      try {
+        const profile = await getUserProfile(userId);
+        
+        if (!profile) {
+          return NextResponse.json(
+            { error: 'User profile not found' },
+            { status: 404 }
+          );
+        }
 
-    if (profileError) {
-      console.error('❌ Error fetching user profile:', profileError);
-      return NextResponse.json(
-        { error: 'Failed to verify user credits' },
-        { status: 500 }
-      );
-    }
+        // Save uploaded file temporarily to get duration for credit calculation
+        const uploadDir = ensureUploadDir();
+        const fileId = uuidv4();
+        const fileExtension = path.extname(file.name) || '.mp4';
+        const tempFilePath = path.join(uploadDir, `${fileId}${fileExtension}`);
 
-    // Save uploaded file temporarily
-    const uploadDir = ensureUploadDir();
-    const fileId = uuidv4();
-    const fileExtension = path.extname(file.name) || '.mp4';
-    const tempFilePath = path.join(uploadDir, `${fileId}${fileExtension}`);
+        const arrayBuffer = await file.arrayBuffer();
+        const buffer = Buffer.from(arrayBuffer);
+        fs.writeFileSync(tempFilePath, buffer);
 
-    const arrayBuffer = await file.arrayBuffer();
-    const buffer = Buffer.from(arrayBuffer);
-    fs.writeFileSync(tempFilePath, buffer);
+        try {
+          // Get video duration for credit calculation
+          const duration = await getVideoDuration(tempFilePath);
+          const creditsNeeded = Math.ceil(duration / 15); // 1 credit per 15 seconds
 
-    try {
-      // Get video duration for credit calculation
-      const duration = await getVideoDuration(tempFilePath);
-      const creditsNeeded = Math.ceil(duration / 15); // 1 credit per 15 seconds
+          console.log(`⏱️ Video duration: ${duration}s, Credits needed: ${creditsNeeded}`);
 
-      console.log(`⏱️ Video duration: ${duration}s, Credits needed: ${creditsNeeded}`);
+          if (profile.credits_balance < creditsNeeded) {
+            // Clean up temp file
+            fs.unlinkSync(tempFilePath);
+            return NextResponse.json(
+              { error: `Insufficient credits. Need ${creditsNeeded}, have ${profile.credits_balance}` },
+              { status: 402 }
+            );
+          }
 
-      if (profile.credits_balance < creditsNeeded) {
-        // Clean up temp file
-        fs.unlinkSync(tempFilePath);
+          // Use the existing video analysis function directly
+          console.log(`🎬 Starting analysis of uploaded video: ${file.name}`);
+          
+          const analysisResult = await analyzeVideo(tempFilePath, userId, creditsNeeded, requestId, 'standard');
+
+          // Clean up temp file
+          fs.unlinkSync(tempFilePath);
+
+          return NextResponse.json({
+            ...analysisResult,
+            requestId,
+            videoSource: 'upload',
+            originalFilename: file.name
+          });
+
+        } catch (error) {
+          // Clean up temp file on error
+          if (fs.existsSync(tempFilePath)) {
+            fs.unlinkSync(tempFilePath);
+          }
+          throw error;
+        }
+      } catch (profileError) {
+        console.error('❌ Error fetching user profile:', profileError);
         return NextResponse.json(
-          { error: `Insufficient credits. Need ${creditsNeeded}, have ${profile.credits_balance}` },
-          { status: 402 }
+          { error: 'Failed to verify user credits' },
+          { status: 500 }
         );
       }
-
-      // Use the existing video analysis function directly
-      console.log(`🎬 Starting analysis of uploaded video: ${file.name}`);
+    } else {
+      // Supabase not available - proceed without credit check (demo mode)
+      console.log('⚠️ Supabase not available - proceeding without credit validation');
       
-      const analysisResult = await analyzeVideo(tempFilePath, userId, creditsNeeded, requestId, 'standard');
+      const uploadDir = ensureUploadDir();
+      const fileId = uuidv4();
+      const fileExtension = path.extname(file.name) || '.mp4';
+      const tempFilePath = path.join(uploadDir, `${fileId}${fileExtension}`);
 
-      // Clean up temp file
-      fs.unlinkSync(tempFilePath);
+      const arrayBuffer = await file.arrayBuffer();
+      const buffer = Buffer.from(arrayBuffer);
+      fs.writeFileSync(tempFilePath, buffer);
 
-      return NextResponse.json({
-        ...analysisResult,
-        requestId,
-        videoSource: 'upload',
-        originalFilename: file.name
-      });
+      try {
+        console.log(`🎬 Starting analysis of uploaded video (demo mode): ${file.name}`);
+        
+        const analysisResult = await analyzeVideo(tempFilePath, null, null, requestId, 'standard');
 
-    } catch (error) {
-      // Clean up temp file on error
-      if (fs.existsSync(tempFilePath)) {
+        // Clean up temp file
         fs.unlinkSync(tempFilePath);
+
+        return NextResponse.json({
+          ...analysisResult,
+          requestId,
+          videoSource: 'upload',
+          originalFilename: file.name,
+          isDemoMode: true
+        });
+
+      } catch (error) {
+        // Clean up temp file on error
+        if (fs.existsSync(tempFilePath)) {
+          fs.unlinkSync(tempFilePath);
+        }
+        throw error;
       }
-      throw error;
     }
 
   } catch (error) {
