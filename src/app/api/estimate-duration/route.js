@@ -22,12 +22,27 @@ export async function POST(request) {
     let lastError = null;
 
     if (isInstagramUrl) {
+      // Check if cookies file has actual content (not just comments)
+      const hasCookies = () => {
+        try {
+          const fs = require('fs');
+          const cookiesContent = fs.readFileSync('./instagram_cookies.txt', 'utf8');
+          const lines = cookiesContent.split('\n');
+          return lines.some(line => {
+            const trimmed = line.trim();
+            return trimmed && !trimmed.startsWith('#') && trimmed.includes('\t');
+          });
+        } catch {
+          return false;
+        }
+      };
+
       // For Instagram URLs, try multiple strategies
       const strategies = [
-        {
+        ...(hasCookies() ? [{
           name: 'cookies_file',
           command: `yt-dlp --get-duration "${url}" --cookies ./instagram_cookies.txt`
-        },
+        }] : []),
         {
           name: 'no_cookies',
           command: `yt-dlp --get-duration "${url}"`

@@ -253,11 +253,25 @@ async function downloadVideo(url) {
     
     // For Instagram URLs, try multiple strategies
     if (isInstagramUrl) {
+      // Check if cookies file has actual content (not just comments)
+      const hasCookies = () => {
+        try {
+          const cookiesContent = fs.readFileSync('./instagram_cookies.txt', 'utf8');
+          const lines = cookiesContent.split('\n');
+          return lines.some(line => {
+            const trimmed = line.trim();
+            return trimmed && !trimmed.startsWith('#') && trimmed.includes('\t');
+          });
+        } catch {
+          return false;
+        }
+      };
+
       const strategies = [
-        {
+        ...(hasCookies() ? [{
           name: 'cookies_file',
           command: `yt-dlp -f 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best' '${url}' -o '${outputPath}' --merge-output-format mp4 --cookies ./instagram_cookies.txt --verbose`
-        },
+        }] : []),
         {
           name: 'no_cookies',
           command: `yt-dlp -f 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best' '${url}' -o '${outputPath}' --merge-output-format mp4 --verbose`
