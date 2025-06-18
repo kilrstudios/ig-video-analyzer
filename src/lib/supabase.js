@@ -1,19 +1,29 @@
 import { createClient } from '@supabase/supabase-js'
+import { validateEnvironment } from './env-check'
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
 
 // Create a function to get the Supabase client
 const getSupabaseClient = () => {
-  console.log('Supabase URL available:', !!supabaseUrl)
-  console.log('Supabase Anon Key available:', !!supabaseAnonKey)
+  // Enhanced logging for debugging
+  console.log('🔍 Supabase Environment Check:')
+  console.log('  URL available:', !!supabaseUrl)
+  console.log('  Key available:', !!supabaseAnonKey)
+  console.log('  URL value:', supabaseUrl || 'undefined')
+  console.log('  Key length:', supabaseAnonKey?.length || 0)
   
-  if (!supabaseUrl || !supabaseAnonKey) {
-    console.warn('Supabase environment variables not found. Some features may not work.')
+  // Use validation utility
+  const envCheck = validateEnvironment()
+  console.log('  Environment validation:', envCheck)
+  
+  if (!supabaseUrl || !supabaseAnonKey || supabaseUrl === 'undefined' || supabaseAnonKey === 'undefined') {
+    console.warn('⚠️  Supabase environment variables not found. Some features may not work.')
+    console.warn('  Missing variables:', envCheck.missing)
     return null
   }
   
-  console.log('Creating Supabase client...')
+  console.log('✅ Creating Supabase client...')
   return createClient(supabaseUrl, supabaseAnonKey)
 }
 

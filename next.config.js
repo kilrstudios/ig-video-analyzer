@@ -1,20 +1,38 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  experimental: {
+    appDir: true,
+  },
+  env: {
+    NEXT_PUBLIC_SUPABASE_URL: process.env.NEXT_PUBLIC_SUPABASE_URL,
+    NEXT_PUBLIC_SUPABASE_ANON_KEY: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
+  },
   // Image optimization settings
   images: {
-    domains: ['localhost'],
+    domains: [
+      'localhost',
+      'instagram.com',
+      'www.instagram.com',
+      'scontent.cdninstagram.com',
+      'scontent-atl3-2.cdninstagram.com',
+      'scontent-atl3-1.cdninstagram.com',
+      'video.xx.fbcdn.net',
+      'scontent.xx.fbcdn.net'
+    ],
     unoptimized: false
   },
   
   // Polyfill configuration for browser compatibility
-  webpack: (config, { isServer }) => {
+  webpack: (config, { buildId, dev, isServer, defaultLoaders, webpack }) => {
+    // This helps with client-side environment variable loading
     if (!isServer) {
       config.resolve.fallback = {
         ...config.resolve.fallback,
         fs: false,
         net: false,
-        tls: false,
+        dns: false,
         child_process: false,
+        tls: false,
       };
     }
     return config;
@@ -23,6 +41,19 @@ const nextConfig = {
   // Security headers
   async headers() {
     return [
+      {
+        source: '/(.*)',
+        headers: [
+          {
+            key: 'Cross-Origin-Embedder-Policy',
+            value: 'unsafe-none'
+          },
+          {
+            key: 'Cross-Origin-Opener-Policy',
+            value: 'same-origin-allow-popups'
+          }
+        ],
+      },
       {
         source: '/:path*',
         headers: [
@@ -64,6 +95,15 @@ const nextConfig = {
             value: '86400',
           },
         ],
+      },
+    ];
+  },
+
+  async rewrites() {
+    return [
+      {
+        source: '/api/proxy/:path*',
+        destination: '/api/proxy/:path*',
       },
     ];
   },
