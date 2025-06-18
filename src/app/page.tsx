@@ -1113,12 +1113,55 @@ export default function Home() {
                   </div>
 
                   {error && (
-                    <div className="bg-red-50 border border-red-200 rounded-lg p-4">
+                    <div className={`rounded-lg p-4 ${
+                      error.includes('Instagram Authentication Required') 
+                        ? 'bg-amber-50 border border-amber-200' 
+                        : 'bg-red-50 border border-red-200'
+                    }`}>
                       <div className="flex">
-                        <svg className="w-5 h-5 text-red-400 mr-2 flex-shrink-0" viewBox="0 0 20 20" fill="currentColor">
-                          <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
-                        </svg>
-                        <p className="text-sm text-red-600">{error}</p>
+                        {error.includes('Instagram Authentication Required') ? (
+                          <svg className="w-5 h-5 text-amber-500 mr-3 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L3.732 16.5c-.77.833.192 2.5 1.732 2.5z" />
+                          </svg>
+                        ) : (
+                          <svg className="w-5 h-5 text-red-400 mr-2 flex-shrink-0" viewBox="0 0 20 20" fill="currentColor">
+                            <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
+                          </svg>
+                        )}
+                        <div className="flex-1">
+                          {error.includes('Instagram Authentication Required') ? (
+                            <div className="space-y-3">
+                              <h4 className="font-semibold text-amber-800 flex items-center gap-2">
+                                🔐 Instagram Authentication Required
+                              </h4>
+                              <p className="text-sm text-amber-700">
+                                This Instagram video requires authentication to download. This commonly happens when the video is from a private account or Instagram is rate-limiting server requests.
+                              </p>
+                              <div className="bg-amber-100 rounded-lg p-3 space-y-2">
+                                <h5 className="text-sm font-semibold text-amber-800">✨ Alternative Solutions:</h5>
+                                <div className="space-y-1 text-xs text-amber-700">
+                                  <div className="flex items-center gap-2">
+                                    <span className="w-4 h-4 bg-amber-200 rounded-full flex items-center justify-center text-[10px] font-bold">1</span>
+                                    <span><strong>Upload Video:</strong> Use the "Upload Video" tab above</span>
+                                  </div>
+                                  <div className="flex items-center gap-2">
+                                    <span className="w-4 h-4 bg-amber-200 rounded-full flex items-center justify-center text-[10px] font-bold">2</span>
+                                    <span><strong>Facebook Ads:</strong> Use "Facebook Ad" tab for Meta ads</span>
+                                  </div>
+                                  <div className="flex items-center gap-2">
+                                    <span className="w-4 h-4 bg-amber-200 rounded-full flex items-center justify-center text-[10px] font-bold">3</span>
+                                    <span><strong>Try Different URL:</strong> Public posts work better</span>
+                                  </div>
+                                </div>
+                              </div>
+                              <p className="text-xs text-amber-600 italic">
+                                💡 Video analysis works perfectly with uploaded files and Facebook ads!
+                              </p>
+                            </div>
+                          ) : (
+                            <p className="text-sm text-red-600">{error}</p>
+                          )}
+                        </div>
                       </div>
                     </div>
                   )}
