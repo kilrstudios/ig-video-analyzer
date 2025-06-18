@@ -1,8 +1,37 @@
 import { createClient } from '@supabase/supabase-js'
 import { validateEnvironment } from './env-check'
 
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
-const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+// Multiple fallback strategies for getting environment variables
+const getEnvVar = (varName, fallback = null) => {
+  // Try process.env first
+  if (process.env[varName]) {
+    return process.env[varName]
+  }
+  
+  // Try window.env if available (for client-side)
+  if (typeof window !== 'undefined' && window.env && window.env[varName]) {
+    return window.env[varName]
+  }
+  
+  // Railway-specific hardcoded fallback (temporary fix)
+  if (typeof window !== 'undefined') {
+    const railwayFallbacks = {
+      'NEXT_PUBLIC_SUPABASE_URL': 'https://ndegjkqkerrltuemgydk.supabase.co',
+      'NEXT_PUBLIC_SUPABASE_ANON_KEY': 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5kZWdqa3FrZXJybHR1ZW1neWRrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDk4MDU0NTYsImV4cCI6MjA2NTM4MTQ1Nn0.nryVTYXw0gOVjJQMMCfUW6pcVlRgMiLzJYQ2gBkZAHA'
+    }
+    
+    // Check if we're on Railway domain
+    if (window.location.hostname.includes('railway.app')) {
+      console.log('🚂 Detected Railway deployment, using fallback values')
+      return railwayFallbacks[varName] || fallback
+    }
+  }
+  
+  return fallback
+}
+
+const supabaseUrl = getEnvVar('NEXT_PUBLIC_SUPABASE_URL')
+const supabaseAnonKey = getEnvVar('NEXT_PUBLIC_SUPABASE_ANON_KEY')
 
 // Create a function to get the Supabase client
 const getSupabaseClient = () => {
@@ -12,6 +41,7 @@ const getSupabaseClient = () => {
   console.log('  Key available:', !!supabaseAnonKey)
   console.log('  URL value:', supabaseUrl || 'undefined')
   console.log('  Key length:', supabaseAnonKey?.length || 0)
+  console.log('  Is Railway:', typeof window !== 'undefined' && window.location.hostname.includes('railway.app'))
   
   // Use validation utility
   const envCheck = validateEnvironment()
