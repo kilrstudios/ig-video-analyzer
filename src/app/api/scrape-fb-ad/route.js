@@ -13,15 +13,97 @@ export async function POST(request) {
 
     console.log(`🔍 Scraping video from: ${adLibraryUrl}`);
 
+    // Check if we're in a serverless environment where Chrome might not work
+    const isServerless = !!(process.env.VERCEL || process.env.NETLIFY || process.env.AWS_LAMBDA_FUNCTION_NAME);
+    const isRailway = !!(process.env.RAILWAY_ENVIRONMENT);
+    
+    if (isServerless) {
+      console.log('⚠️ Detected serverless environment - Facebook ad scraping may not work');
+      return NextResponse.json(
+        { 
+          error: 'Facebook ad scraping is not available in this deployment environment. Please try using direct video URLs instead, or contact support.',
+          suggestion: 'You can download the video manually and upload it directly for analysis.'
+        },
+        { status: 503 }
+      );
+    }
+
     // Import puppeteer dynamically
     const puppeteer = await import('puppeteer');
     
     let browser;
     try {
-      browser = await puppeteer.default.launch({ 
+      // Configure browser launch options for production environments
+      const launchOptions = {
         headless: true,
-        args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
-      });
+        args: [
+          '--no-sandbox',
+          '--disable-setuid-sandbox',
+          '--disable-dev-shm-usage',
+          '--disable-accelerated-2d-canvas',
+          '--no-first-run',
+          '--no-zygote',
+          '--single-process', // <- this one doesn't work in Windows
+          '--disable-gpu'
+        ]
+      };
+
+      // For production environments, try to use bundled Chrome first
+      try {
+        browser = await puppeteer.default.launch(launchOptions);
+      } catch (chromeError) {
+        console.log('❌ Failed to launch with bundled Chrome, error:', chromeError.message);
+        
+                 // Try with different approach - attempt system Chrome paths
+         try {
+           console.log('🔄 Trying system Chrome paths...');
+          
+          // If we're in a serverless environment, suggest using external service
+          if (process.env.VERCEL || process.env.NETLIFY || process.env.AWS_LAMBDA_FUNCTION_NAME) {
+            throw new Error('Facebook ad scraping is not available in serverless environments due to Chrome requirements. Please try using direct video URLs instead.');
+          }
+          
+          // Last resort: try to find system Chrome
+          const chromePaths = [
+            '/usr/bin/google-chrome-stable',
+            '/usr/bin/google-chrome',
+            '/usr/bin/chromium-browser',
+            '/usr/bin/chromium'
+          ];
+
+          let chromeFound = false;
+          for (const chromePath of chromePaths) {
+            try {
+              const fs = await import('fs');
+              if (fs.existsSync && fs.existsSync(chromePath)) {
+                browser = await puppeteer.default.launch({
+                  ...launchOptions,
+                  executablePath: chromePath
+                });
+                console.log(`✅ Successfully launched Chrome from: ${chromePath}`);
+                chromeFound = true;
+                break;
+              }
+            } catch (pathError) {
+              continue;
+            }
+          }
+
+          if (!chromeFound) {
+            throw new Error('Chrome browser not found. Facebook ad scraping requires Chrome to be installed. Please use direct video URLs instead, or contact support for deployment assistance.');
+          }
+        } catch (fallbackError) {
+          // Provide helpful error message with suggestion
+          return NextResponse.json(
+            { 
+              error: 'Facebook ad scraping is currently unavailable due to browser configuration issues.',
+              suggestion: 'Please try downloading the video manually and uploading it directly, or use a direct video URL instead.',
+              technical: fallbackError.message
+            },
+            { status: 503 }
+          );
+        }
+      }
       
       const page = await browser.newPage();
       

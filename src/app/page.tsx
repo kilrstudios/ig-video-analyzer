@@ -4,6 +4,8 @@ import { useState, FormEvent, useEffect, useRef } from 'react';
 import VideoUploader from '@/components/VideoUploader';
 import VideoAnalysis from '@/components/VideoAnalysis';
 import AuthModal from '@/components/AuthModal';
+import PurchaseSuccess from '@/components/PurchaseSuccess';
+import UserDashboard from '@/components/UserDashboard';
 import { useAuth } from '@/contexts/AuthContext';
 
 
@@ -235,6 +237,9 @@ export default function Home() {
   const [inputMethod, setInputMethod] = useState<'url' | 'upload' | 'fbad'>('url');
   const [fbAdUrl, setFbAdUrl] = useState('');
   const [isCopying, setIsCopying] = useState(false);
+  const [showPurchaseSuccess, setShowPurchaseSuccess] = useState(false);
+  const [paymentSessionId, setPaymentSessionId] = useState<string | null>(null);
+  const [showDashboard, setShowDashboard] = useState(false);
   
   // Refs to avoid closure issues in intervals
   const progressIntervalRef = useRef<NodeJS.Timeout | null>(null);
@@ -250,6 +255,26 @@ export default function Home() {
   useEffect(() => {
     console.log('📈 analysisProgress state changed to:', analysisProgress);
   }, [analysisProgress]);
+
+  // Handle payment success/cancel redirects
+  useEffect(() => {
+    const urlParams = new URLSearchParams(window.location.search);
+    const success = urlParams.get('success');
+    const sessionId = urlParams.get('session_id');
+    const cancelled = urlParams.get('canceled');
+
+    if (success === 'true' && sessionId) {
+      setPaymentSessionId(sessionId);
+      setShowPurchaseSuccess(true);
+      // Clean up URL
+      window.history.replaceState({}, document.title, window.location.pathname);
+    } else if (cancelled === 'true') {
+      // Handle payment cancellation
+      console.log('Payment was cancelled');
+      // Clean up URL
+      window.history.replaceState({}, document.title, window.location.pathname);
+    }
+  }, []);
 
   // Debug function to manually test progress API
   const testProgressAPI = async () => {
@@ -521,6 +546,13 @@ export default function Home() {
 
       if (!scrapeResponse.ok) {
         const errorData = await scrapeResponse.json();
+        
+        // Handle specific error cases with helpful suggestions
+        if (scrapeResponse.status === 503) {
+          const suggestion = errorData.suggestion ? `\n\n💡 ${errorData.suggestion}` : '';
+          throw new Error(`${errorData.error}${suggestion}`);
+        }
+        
         throw new Error(errorData.error || 'Failed to extract video from Facebook ad');
       }
 
@@ -948,7 +980,10 @@ export default function Home() {
             <div className="flex justify-center">
               {user ? (
                 <div className="bg-white rounded-lg shadow-sm border p-4 flex items-center gap-4">
-                  <div className="text-right">
+                  <button
+                    onClick={() => setShowDashboard(true)}
+                    className="text-right hover:bg-gray-50 rounded p-2 transition-colors"
+                  >
                     <div className="text-sm font-semibold text-gray-900">
                       {profile?.full_name || user.email}
                     </div>
@@ -959,7 +994,7 @@ export default function Home() {
                       </svg>
                       {(profile?.credits_balance ?? profile?.credits ?? 0)} credits
                     </div>
-                  </div>
+                  </button>
                   <button
                     onClick={async () => {
                       await signOut();
@@ -1357,6 +1392,24 @@ export default function Home() {
         <AuthModal 
           isOpen={showAuthModal} 
           onClose={() => setShowAuthModal(false)} 
+        />
+      )}
+
+      {/* Purchase Success Modal */}
+      {showPurchaseSuccess && (
+        <PurchaseSuccess 
+          sessionId={paymentSessionId}
+          onClose={() => {
+            setShowPurchaseSuccess(false);
+            setPaymentSessionId(null);
+          }} 
+        />
+      )}
+
+      {/* User Dashboard Modal */}
+      {showDashboard && (
+        <UserDashboard 
+          onClose={() => setShowDashboard(false)} 
         />
       )}
     </div>

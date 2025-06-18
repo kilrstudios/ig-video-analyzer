@@ -9,6 +9,7 @@ export default function UserDashboard({ onClose }) {
   const [analyses, setAnalyses] = useState([])
   const [loading, setLoading] = useState(true)
   const [activeTab, setActiveTab] = useState('overview')
+  const [purchasing, setPurchasing] = useState(false)
 
   useEffect(() => {
     if (user) {
@@ -30,6 +31,40 @@ export default function UserDashboard({ onClose }) {
   const handleSignOut = async () => {
     await signOut()
     onClose()
+  }
+
+  const handlePurchase = async (packType) => {
+    try {
+      setPurchasing(true)
+
+      // Create checkout session
+      const response = await fetch('/api/stripe/create-checkout-session', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          packType,
+          userId: user.id,
+        }),
+      })
+
+      if (!response.ok) {
+        throw new Error('Failed to create checkout session')
+      }
+
+      const { sessionId } = await response.json()
+
+      // Redirect to Stripe Checkout
+      const stripe = window.Stripe(process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY)
+      await stripe.redirectToCheckout({ sessionId })
+
+    } catch (error) {
+      console.error('Purchase error:', error)
+      alert('Something went wrong. Please try again.')
+    } finally {
+      setPurchasing(false)
+    }
   }
 
   if (!profile) {
@@ -243,34 +278,70 @@ export default function UserDashboard({ onClose }) {
                 </p>
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                {/* Starter Pack - 10 Credits */}
                 <div className="border rounded-lg p-4 text-center">
                   <h4 className="font-semibold text-gray-900">Starter Pack</h4>
-                  <p className="text-2xl font-bold text-blue-600 my-2">50 Credits</p>
-                  <p className="text-sm text-gray-600 mb-4">$9.99</p>
-                  <button className="w-full bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700">
-                    Purchase
+                  <p className="text-2xl font-bold text-blue-600 my-2">10 Credits</p>
+                  <p className="text-sm text-gray-600 mb-2">$2.50</p>
+                  <p className="text-xs text-gray-500 mb-4">$0.25 per credit</p>
+                  <button 
+                    onClick={() => handlePurchase('pack_10')}
+                    disabled={purchasing}
+                    className="w-full bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {purchasing ? 'Processing...' : 'Purchase'}
                   </button>
                 </div>
                 
+                {/* Value Pack - 50 Credits */}
+                <div className="border rounded-lg p-4 text-center">
+                  <h4 className="font-semibold text-gray-900">Value Pack</h4>
+                  <p className="text-2xl font-bold text-blue-600 my-2">50 Credits</p>
+                  <p className="text-sm text-gray-600 mb-1">$11.50</p>
+                  <p className="text-xs text-green-600 font-medium mb-1">Save 8%!</p>
+                  <p className="text-xs text-gray-500 mb-4">$0.23 per credit</p>
+                  <button 
+                    onClick={() => handlePurchase('pack_50')}
+                    disabled={purchasing}
+                    className="w-full bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {purchasing ? 'Processing...' : 'Purchase'}
+                  </button>
+                </div>
+                
+                {/* Popular Pack - 100 Credits */}
                 <div className="border-2 border-blue-500 rounded-lg p-4 text-center relative">
                   <div className="absolute -top-2 left-1/2 transform -translate-x-1/2">
-                    <span className="bg-blue-500 text-white px-3 py-1 rounded-full text-xs">Popular</span>
+                    <span className="bg-blue-500 text-white px-3 py-1 rounded-full text-xs">Best Value</span>
                   </div>
-                  <h4 className="font-semibold text-gray-900">Pro Pack</h4>
-                  <p className="text-2xl font-bold text-blue-600 my-2">200 Credits</p>
-                  <p className="text-sm text-gray-600 mb-4">$29.99</p>
-                  <button className="w-full bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700">
-                    Purchase
+                  <h4 className="font-semibold text-gray-900">Popular Pack</h4>
+                  <p className="text-2xl font-bold text-blue-600 my-2">100 Credits</p>
+                  <p className="text-sm text-gray-600 mb-1">$22.00</p>
+                  <p className="text-xs text-green-600 font-medium mb-1">Save 12%!</p>
+                  <p className="text-xs text-gray-500 mb-4">$0.22 per credit</p>
+                  <button 
+                    onClick={() => handlePurchase('pack_100')}
+                    disabled={purchasing}
+                    className="w-full bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {purchasing ? 'Processing...' : 'Purchase'}
                   </button>
                 </div>
                 
+                {/* Enterprise Pack - 500 Credits */}
                 <div className="border rounded-lg p-4 text-center">
-                  <h4 className="font-semibold text-gray-900">Enterprise</h4>
+                  <h4 className="font-semibold text-gray-900">Enterprise Pack</h4>
                   <p className="text-2xl font-bold text-blue-600 my-2">500 Credits</p>
-                  <p className="text-sm text-gray-600 mb-4">$69.99</p>
-                  <button className="w-full bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700">
-                    Purchase
+                  <p className="text-sm text-gray-600 mb-1">$100.00</p>
+                  <p className="text-xs text-green-600 font-medium mb-1">Save 20%!</p>
+                  <p className="text-xs text-gray-500 mb-4">$0.20 per credit</p>
+                  <button 
+                    onClick={() => handlePurchase('pack_500')}
+                    disabled={purchasing}
+                    className="w-full bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {purchasing ? 'Processing...' : 'Purchase'}
                   </button>
                 </div>
               </div>
@@ -282,6 +353,7 @@ export default function UserDashboard({ onClose }) {
                   <li>• Example: 30-second video = 2 credits</li>
                   <li>• New users get 10 free credits to start</li>
                   <li>• Credits never expire</li>
+                  <li>• Secure payments powered by Stripe</li>
                 </ul>
               </div>
             </div>
