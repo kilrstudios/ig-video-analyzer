@@ -80,11 +80,35 @@ const getSupabaseClient = () => {
   return createClient(supabaseUrl, supabaseAnonKey)
 }
 
-export const supabase = getSupabaseClient()
+// Lazy initialization to avoid build-time issues
+let supabaseClient = null;
+let isInitialized = false;
+
+function initializeSupabase() {
+  if (!isInitialized) {
+    supabaseClient = getSupabaseClient();
+    isInitialized = true;
+  }
+  return supabaseClient;
+}
+
+export const supabase = new Proxy({}, {
+  get(target, prop) {
+    const client = initializeSupabase();
+    if (!client) return undefined;
+    return typeof client[prop] === 'function' ? client[prop].bind(client) : client[prop];
+  }
+});
 
 // Helper function to check if Supabase is available
 export const isSupabaseAvailable = () => {
-  return supabase !== null
+  try {
+    const client = initializeSupabase();
+    return client !== null;
+  } catch (error) {
+    console.warn('Supabase initialization check failed:', error.message);
+    return false;
+  }
 }
 
 // Helper function to get the current user's profile

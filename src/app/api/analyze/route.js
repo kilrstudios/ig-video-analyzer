@@ -8,9 +8,19 @@ import { isSupabaseAvailable, getUserProfile, updateUserCredits, supabase } from
 import { setProgress } from '../../../lib/progressStore.js';
 
 const execAsync = promisify(exec);
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY
-});
+
+// Lazy initialization of OpenAI client to avoid build-time dependency on env vars
+let openai = null;
+function getOpenAIClient() {
+  if (!openai) {
+    const apiKey = process.env.OPENAI_API_KEY;
+    if (!apiKey) {
+      throw new Error('OPENAI_API_KEY environment variable is not set');
+    }
+    openai = new OpenAI({ apiKey });
+  }
+  return openai;
+}
 
 // Rate limiting configuration
 const RATE_LIMIT_DELAY = 3000; // 3 seconds between requests
@@ -872,7 +882,7 @@ Please provide clear, professional analysis focusing on the content creation and
         });
       });
 
-      const response = await openai.chat.completions.create({
+      const response = await getOpenAIClient().chat.completions.create({
         model: "gpt-4o-mini",
         messages: [{ role: "user", content }],
         max_tokens: 12000 // Increased from 3000 - using more of our 16,384 token limit
@@ -1165,7 +1175,7 @@ async function analyzeFrame(framePath, frameIndex) {
     });
 
     const result = await handleRateLimit(async () => {
-    const response = await openai.chat.completions.create({
+    const response = await getOpenAIClient().chat.completions.create({
       model: "gpt-4o-mini",
       messages: [
         {
@@ -1244,7 +1254,7 @@ async function analyzeAudio(audioPath) {
     const transcriptionStartTime = Date.now();
     
   const transcription = await handleRateLimit(async () => {
-    return await openai.audio.transcriptions.create({
+    return await getOpenAIClient().audio.transcriptions.create({
       file: audioFile,
       model: "whisper-1",
       response_format: "verbose_json",
@@ -1264,7 +1274,7 @@ async function analyzeAudio(audioPath) {
     const analysisStartTime = Date.now();
     
   const separationAnalysis = await handleRateLimit(async () => {
-    const response = await openai.chat.completions.create({
+    const response = await getOpenAIClient().chat.completions.create({
       model: "gpt-4o",
       messages: [
         {
@@ -1588,7 +1598,7 @@ Brief summary of the video's content and primary purpose.
 Focus on WHY techniques work, not just WHAT is happening. Explain the systematic patterns that make content effective and provide actionable replication strategies.`;
 
     const response = await handleRateLimit(async () => {
-      return await openai.chat.completions.create({
+      return await getOpenAIClient().chat.completions.create({
         model: "gpt-4o",
         messages: [
           {
@@ -2392,7 +2402,7 @@ async function generateSceneCard(scene, sceneIndex, audioAnalysis) {
   
   // Generate comprehensive scene analysis including contextual meaning
   const sceneAnalysis = await handleRateLimit(async () => {
-    const response = await openai.chat.completions.create({
+    const response = await getOpenAIClient().chat.completions.create({
       model: "gpt-4o",
       messages: [
         {
@@ -2612,7 +2622,7 @@ async function generateContentStructure(frameAnalyses, audioAnalysis, scenes, fp
     }));
 
     const strategicAnalysis = await handleRateLimit(async () => {
-      const response = await openai.chat.completions.create({
+      const response = await getOpenAIClient().chat.completions.create({
         model: "gpt-4o",
         messages: [
           {
@@ -2779,7 +2789,7 @@ Return ONLY the hooks that are actually present in this specific video content a
 }`;
 
     const response = await handleRateLimit(async () => {
-      return await openai.chat.completions.create({
+      return await getOpenAIClient().chat.completions.create({
         model: "gpt-4o",
         messages: [
           {
@@ -2909,7 +2919,7 @@ Analyze the content carefully and return JSON with:
 }`;
 
     const response = await handleRateLimit(async () => {
-      return await openai.chat.completions.create({
+      return await getOpenAIClient().chat.completions.create({
         model: "gpt-4o",
         messages: [
           {
@@ -3080,7 +3090,7 @@ Return detailed JSON analysis:
 }`;
 
     const response = await handleRateLimit(async () => {
-      return await openai.chat.completions.create({
+      return await getOpenAIClient().chat.completions.create({
         model: "gpt-4o",
         messages: [
           {
@@ -3728,7 +3738,7 @@ CRITICAL REQUIREMENTS:
 - Include realistic resource assessments`;
 
     const response = await handleRateLimit(async () => {
-      return await openai.chat.completions.create({
+      return await getOpenAIClient().chat.completions.create({
         model: "gpt-4o-mini",
         messages: [
           {
@@ -4051,7 +4061,7 @@ OUTPUT: Return ONLY valid JSON array with this structure:
 IMPORTANT: Base all descriptions on the actual frame content provided above. Do not create fictional content.`;
 
     const response = await handleRateLimit(async () => {
-      return await openai.chat.completions.create({
+      return await getOpenAIClient().chat.completions.create({
         model: "gpt-4o",
         messages: [
           {
@@ -4297,7 +4307,7 @@ Provide analysis in this EXACT JSON structure:
 }`;
 
     const response = await handleRateLimit(async () => {
-      return await openai.chat.completions.create({
+      return await getOpenAIClient().chat.completions.create({
         model: "gpt-4o",
         messages: [
           {
