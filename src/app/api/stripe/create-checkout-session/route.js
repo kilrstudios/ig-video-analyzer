@@ -1,8 +1,6 @@
 import { NextResponse } from 'next/server'
 import Stripe from 'stripe'
-import { supabase } from '@/lib/supabase'
-
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY)
+import { createClient } from '@supabase/supabase-js'
 
 // Token pack configurations based on user's pricing
 const TOKEN_PACKS = {
@@ -32,8 +30,47 @@ const TOKEN_PACKS = {
   }
 }
 
+// Runtime initialization functions
+function getStripeClient() {
+  if (process.env.STRIPE_SECRET_KEY) {
+    return new Stripe(process.env.STRIPE_SECRET_KEY)
+  }
+  return null
+}
+
+function getSupabaseClient() {
+  if (process.env.NEXT_PUBLIC_SUPABASE_URL && process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY) {
+    return createClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL,
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+    )
+  }
+  return null
+}
+
 export async function POST(request) {
   try {
+    // Initialize services at runtime
+    const stripe = getStripeClient()
+    const supabase = getSupabaseClient()
+
+    // Check if services are available
+    if (!stripe) {
+      console.error('Stripe not initialized - missing STRIPE_SECRET_KEY')
+      return NextResponse.json(
+        { error: 'Payment service not configured' },
+        { status: 503 }
+      )
+    }
+
+    if (!supabase) {
+      console.error('Supabase not available - missing environment variables')
+      return NextResponse.json(
+        { error: 'Database service not available' },
+        { status: 503 }
+      )
+    }
+
     const { packType, userId } = await request.json()
 
     if (!packType || !userId) {

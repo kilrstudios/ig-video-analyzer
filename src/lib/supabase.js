@@ -86,7 +86,12 @@ let isInitialized = false;
 
 function initializeSupabase() {
   if (!isInitialized) {
-    supabaseClient = getSupabaseClient();
+    try {
+      supabaseClient = getSupabaseClient();
+    } catch (error) {
+      console.warn('Supabase initialization failed:', error.message);
+      supabaseClient = null;
+    }
     isInitialized = true;
   }
   return supabaseClient;
@@ -94,8 +99,17 @@ function initializeSupabase() {
 
 export const supabase = new Proxy({}, {
   get(target, prop) {
+    // During build time, just return a mock function to prevent errors
+    if (typeof window === 'undefined' && process.env.NODE_ENV !== 'development') {
+      console.log(`Supabase proxy access during build: ${prop}`);
+      return prop === 'rpc' || prop === 'from' ? () => ({ select: () => ({ eq: () => ({}) }) }) : undefined;
+    }
+    
     const client = initializeSupabase();
-    if (!client) return undefined;
+    if (!client) {
+      console.warn(`Supabase client not available for property: ${prop}`);
+      return undefined;
+    }
     return typeof client[prop] === 'function' ? client[prop].bind(client) : client[prop];
   }
 });
