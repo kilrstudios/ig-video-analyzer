@@ -8,7 +8,7 @@ export default function UserDashboard({ onClose }) {
   const { user, profile, signOut, refreshProfile } = useAuth()
   const [analyses, setAnalyses] = useState([])
   const [loading, setLoading] = useState(true)
-  const [activeTab, setActiveTab] = useState('overview')
+  const [activeTab, setActiveTab] = useState('analyses')
   const [purchasing, setPurchasing] = useState(false)
 
   useEffect(() => {
@@ -96,17 +96,21 @@ export default function UserDashboard({ onClose }) {
         {/* Tabs */}
         <div className="border-b">
           <nav className="-mb-px flex space-x-8 px-6">
-            {['overview', 'analyses', 'credits'].map((tab) => (
+            {[
+              { key: 'analyses', label: 'Analyses' },
+              { key: 'content', label: 'Content Analysis' },
+              { key: 'credits', label: 'Credits' }
+            ].map((tab) => (
               <button
-                key={tab}
-                onClick={() => setActiveTab(tab)}
-                className={`py-4 px-1 border-b-2 font-medium text-sm capitalize ${
-                  activeTab === tab
+                key={tab.key}
+                onClick={() => setActiveTab(tab.key)}
+                className={`py-4 px-1 border-b-2 font-medium text-sm ${
+                  activeTab === tab.key
                     ? 'border-blue-500 text-blue-600'
                     : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
                 }`}
               >
-                {tab}
+                {tab.label}
               </button>
             ))}
           </nav>
@@ -114,120 +118,7 @@ export default function UserDashboard({ onClose }) {
 
         {/* Content */}
         <div className="p-6 overflow-y-auto max-h-[calc(90vh-160px)]">
-          {activeTab === 'overview' && (
-            <div className="space-y-6">
-              {/* Profile Info */}
-              <div className="bg-gray-50 rounded-lg p-6">
-                <h3 className="text-lg font-semibold mb-4">Profile Information</h3>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700">Email</label>
-                    <p className="mt-1 text-sm text-gray-900">{profile.email}</p>
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700">Full Name</label>
-                    <p className="mt-1 text-sm text-gray-900">{profile.full_name || 'Not set'}</p>
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700">Plan</label>
-                    <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
-                      profile.plan_type === 'pro' 
-                        ? 'bg-blue-100 text-blue-800'
-                        : 'bg-gray-100 text-gray-800'
-                    }`}>
-                      {profile.plan_type.charAt(0).toUpperCase() + profile.plan_type.slice(1)}
-                    </span>
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700">Member Since</label>
-                    <p className="mt-1 text-sm text-gray-900">
-                      {new Date(profile.created_at).toLocaleDateString()}
-                    </p>
-                  </div>
-                </div>
-              </div>
 
-              {/* Quick Stats */}
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                <div className="bg-blue-50 rounded-lg p-4">
-                  <div className="flex items-center">
-                    <div className="flex-shrink-0">
-                      <div className="w-8 h-8 bg-blue-500 rounded-full flex items-center justify-center">
-                        <svg className="w-4 h-4 text-white" fill="currentColor" viewBox="0 0 20 20">
-                          <path d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-                        </svg>
-                      </div>
-                    </div>
-                    <div className="ml-4">
-                      <p className="text-sm font-medium text-gray-900">Available Credits</p>
-                      <p className="text-2xl font-bold text-blue-600">{profile.credits_balance}</p>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="bg-green-50 rounded-lg p-4">
-                  <div className="flex items-center">
-                    <div className="flex-shrink-0">
-                      <div className="w-8 h-8 bg-green-500 rounded-full flex items-center justify-center">
-                        <svg className="w-4 h-4 text-white" fill="currentColor" viewBox="0 0 20 20">
-                          <path d="M3 4a1 1 0 011-1h12a1 1 0 011 1v2a1 1 0 01-1 1H4a1 1 0 01-1-1V4zM3 10a1 1 0 011-1h6a1 1 0 011 1v6a1 1 0 01-1 1H4a1 1 0 01-1-1v-6zM14 9a1 1 0 00-1 1v6a1 1 0 001 1h2a1 1 0 001-1v-6a1 1 0 00-1-1h-2z" />
-                        </svg>
-                      </div>
-                    </div>
-                    <div className="ml-4">
-                      <p className="text-sm font-medium text-gray-900">Total Analyses</p>
-                      <p className="text-2xl font-bold text-green-600">{analyses.length}</p>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="bg-purple-50 rounded-lg p-4">
-                  <div className="flex items-center">
-                    <div className="flex-shrink-0">
-                      <div className="w-8 h-8 bg-purple-500 rounded-full flex items-center justify-center">
-                        <svg className="w-4 h-4 text-white" fill="currentColor" viewBox="0 0 20 20">
-                          <path d="M2.003 5.884L10 9.882l7.997-3.998A2 2 0 0016 4H4a2 2 0 00-1.997 1.884z" />
-                          <path d="M18 8.118l-8 4-8-4V14a2 2 0 002 2h12a2 2 0 002-2V8.118z" />
-                        </svg>
-                      </div>
-                    </div>
-                    <div className="ml-4">
-                      <p className="text-sm font-medium text-gray-900">Credits Used</p>
-                      <p className="text-2xl font-bold text-purple-600">{profile.total_credits_used}</p>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              {/* Recent Analyses Preview */}
-              <div>
-                <h3 className="text-lg font-semibold mb-4">Recent Analyses</h3>
-                {analyses.length > 0 ? (
-                  <div className="space-y-3">
-                    {analyses.slice(0, 3).map((analysis) => (
-                      <div key={analysis.id} className="border rounded-lg p-4">
-                        <div className="flex justify-between items-start">
-                          <div className="flex-1">
-                            <p className="text-sm font-medium text-gray-900 truncate">
-                              {analysis.video_url}
-                            </p>
-                            <p className="text-xs text-gray-500">
-                              {new Date(analysis.created_at).toLocaleDateString()}
-                            </p>
-                          </div>
-                          <span className="text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded">
-                            {analysis.credits_used} credits
-                          </span>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <p className="text-gray-500 text-center py-8">No analyses yet</p>
-                )}
-              </div>
-            </div>
-          )}
 
           {activeTab === 'analyses' && (
             <div>
@@ -254,16 +145,235 @@ export default function UserDashboard({ onClose }) {
                           <p className="text-xs text-gray-500 mt-1">{analysis.status}</p>
                         </div>
                       </div>
-                      {analysis.analysis_data?.scenes && (
-                        <p className="text-sm text-gray-600">
-                          {analysis.analysis_data.scenes.length} scenes analyzed
-                        </p>
-                      )}
+                      <div className="text-sm text-gray-600 space-y-1">
+                        {analysis.scene_analysis && analysis.scene_analysis.length > 0 && (
+                          <p>{analysis.scene_analysis.length} scenes analyzed</p>
+                        )}
+                        {analysis.hook_analysis && analysis.hook_analysis.length > 0 && (
+                          <p>{analysis.hook_analysis.length} hooks identified</p>
+                        )}
+                        {analysis.content_analysis?.videoCategory && (
+                          <p>Category: {analysis.content_analysis.videoCategory.category || 'Unknown'}</p>
+                        )}
+                        {analysis.video_metadata?.totalDuration && (
+                          <p>Duration: {analysis.video_metadata.totalDuration}</p>
+                        )}
+                        {!analysis.scene_analysis && analysis.analysis_data?.scenes && (
+                          <p>{analysis.analysis_data.scenes.length} scenes analyzed (legacy)</p>
+                        )}
+                      </div>
                     </div>
                   ))}
                 </div>
               ) : (
                 <p className="text-gray-500 text-center py-8">No analyses found</p>
+              )}
+            </div>
+          )}
+
+          {activeTab === 'content' && (
+            <div>
+              <h3 className="text-lg font-semibold mb-4">Content Analysis Dashboard</h3>
+              {loading ? (
+                <div className="flex justify-center py-8">
+                  <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+                </div>
+              ) : analyses.length > 0 ? (
+                <div className="space-y-6">
+                  {analyses.filter(analysis => analysis.analysis_version === '2.0' || analysis.content_analysis).map((analysis) => (
+                    <div key={analysis.id} className="border rounded-lg overflow-hidden">
+                      {/* Analysis Header */}
+                      <div className="bg-gray-50 px-6 py-4 border-b">
+                        <div className="flex justify-between items-start">
+                          <div>
+                            <h4 className="font-medium text-gray-900 truncate">{analysis.video_url}</h4>
+                            <p className="text-sm text-gray-500">
+                              {new Date(analysis.created_at).toLocaleString()}
+                            </p>
+                          </div>
+                          <span className="text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded">
+                            {analysis.credits_used} credits
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Content Analysis Data */}
+                      <div className="p-6 space-y-6">
+                        {/* Scene Analysis */}
+                        {analysis.scene_analysis && analysis.scene_analysis.length > 0 && (
+                          <div>
+                            <h5 className="font-semibold text-gray-900 mb-3 flex items-center">
+                              <svg className="w-5 h-5 mr-2 text-blue-600" fill="currentColor" viewBox="0 0 20 20">
+                                <path d="M4 3a2 2 0 00-2 2v10a2 2 0 002 2h12a2 2 0 002-2V5a2 2 0 00-2-2H4zm12 12H4l4-8 3 6 2-4 3 6z" />
+                              </svg>
+                              Scene Analysis ({analysis.scene_analysis.length} scenes)
+                            </h5>
+                            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                              {analysis.scene_analysis.slice(0, 6).map((scene, index) => (
+                                <div key={index} className="bg-gray-50 rounded-lg p-4">
+                                  <div className="flex justify-between items-start mb-2">
+                                    <span className="text-sm font-medium text-blue-600">Scene {index + 1}</span>
+                                    <span className="text-xs text-gray-500">{scene.duration || scene.timing || `${scene.startFrame}-${scene.endFrame}`}</span>
+                                  </div>
+                                  <p className="text-sm text-gray-700 line-clamp-3">
+                                    {scene.description || scene.content || scene.analysis || 'No description available'}
+                                  </p>
+                                  {scene.shotType && (
+                                    <span className="inline-block mt-2 text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded">
+                                      {scene.shotType}
+                                    </span>
+                                  )}
+                                </div>
+                              ))}
+                            </div>
+                            {analysis.scene_analysis.length > 6 && (
+                              <p className="text-sm text-gray-500 mt-2">
+                                +{analysis.scene_analysis.length - 6} more scenes
+                              </p>
+                            )}
+                          </div>
+                        )}
+
+                        {/* Hook Analysis */}
+                        {analysis.hook_analysis && analysis.hook_analysis.length > 0 && (
+                          <div>
+                            <h5 className="font-semibold text-gray-900 mb-3 flex items-center">
+                              <svg className="w-5 h-5 mr-2 text-green-600" fill="currentColor" viewBox="0 0 20 20">
+                                <path fillRule="evenodd" d="M11.3 1.046A1 1 0 0112 2v5h4a1 1 0 01.82 1.573l-7 10A1 1 0 018 18v-5H4a1 1 0 01-.82-1.573l7-10a1 1 0 011.12-.38z" clipRule="evenodd" />
+                              </svg>
+                              Hook Analysis ({analysis.hook_analysis.length} hooks)
+                            </h5>
+                            <div className="space-y-3">
+                              {analysis.hook_analysis.slice(0, 3).map((hook, index) => (
+                                <div key={index} className="bg-green-50 rounded-lg p-4">
+                                  <div className="flex justify-between items-start mb-2">
+                                    <span className="text-sm font-medium text-green-600">
+                                      {hook.type || `Hook ${index + 1}`}
+                                    </span>
+                                    <span className="text-xs text-gray-500">{hook.timestamp || hook.timing}</span>
+                                  </div>
+                                  <p className="text-sm text-gray-700">
+                                    {hook.description || hook.content || hook.analysis || 'No description available'}
+                                  </p>
+                                  {hook.effectiveness && (
+                                    <div className="mt-2">
+                                      <span className="text-xs text-green-600 font-medium">
+                                        Effectiveness: {hook.effectiveness}
+                                      </span>
+                                    </div>
+                                  )}
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Transcript */}
+                        {analysis.transcript_data && (
+                          <div>
+                            <h5 className="font-semibold text-gray-900 mb-3 flex items-center">
+                              <svg className="w-5 h-5 mr-2 text-purple-600" fill="currentColor" viewBox="0 0 20 20">
+                                <path fillRule="evenodd" d="M7 4a3 3 0 016 0v4a3 3 0 11-6 0V4zm4 10.93A7.001 7.001 0 0017 8a1 1 0 10-2 0A5 5 0 015 8a1 1 0 00-2 0 7.001 7.001 0 006 6.93V17H6a1 1 0 100 2h8a1 1 0 100-2h-3v-2.07z" clipRule="evenodd" />
+                              </svg>
+                              Transcript
+                            </h5>
+                            <div className="bg-purple-50 rounded-lg p-4">
+                              <p className="text-sm text-gray-700 line-clamp-6">
+                                {analysis.transcript_data.text || 'No transcript available'}
+                              </p>
+                              {analysis.transcript_data.segments && analysis.transcript_data.segments.length > 0 && (
+                                <p className="text-xs text-purple-600 mt-2">
+                                  {analysis.transcript_data.segments.length} segments detected
+                                </p>
+                              )}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Content Analysis Summary */}
+                        {analysis.content_analysis && (
+                          <div>
+                            <h5 className="font-semibold text-gray-900 mb-3 flex items-center">
+                              <svg className="w-5 h-5 mr-2 text-indigo-600" fill="currentColor" viewBox="0 0 20 20">
+                                <path fillRule="evenodd" d="M3 4a1 1 0 011-1h12a1 1 0 011 1v2a1 1 0 01-1 1H4a1 1 0 01-1-1V4zm0 4a1 1 0 011-1h12a1 1 0 011 1v6a1 1 0 01-1 1H4a1 1 0 01-1-1V8z" clipRule="evenodd" />
+                              </svg>
+                              Strategic Overview
+                            </h5>
+                            <div className="bg-indigo-50 rounded-lg p-4">
+                              {analysis.content_analysis.videoCategory && (
+                                <div className="mb-3">
+                                  <span className="text-xs bg-indigo-100 text-indigo-800 px-2 py-1 rounded">
+                                    {analysis.content_analysis.videoCategory.category || 'Category'}
+                                  </span>
+                                </div>
+                              )}
+                              <div className="text-sm text-gray-700 space-y-2">
+                                {analysis.content_analysis.strategicOverview && (
+                                  <div>
+                                    <h6 className="font-medium text-gray-900 mb-1">Strategic Analysis</h6>
+                                    <p className="line-clamp-4">{typeof analysis.content_analysis.strategicOverview === 'string' 
+                                      ? analysis.content_analysis.strategicOverview 
+                                      : JSON.stringify(analysis.content_analysis.strategicOverview)}</p>
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Video Metadata */}
+                        {analysis.video_metadata && (
+                          <div>
+                            <h5 className="font-semibold text-gray-900 mb-3 flex items-center">
+                              <svg className="w-5 h-5 mr-2 text-gray-600" fill="currentColor" viewBox="0 0 20 20">
+                                <path fillRule="evenodd" d="M4 3a2 2 0 00-2 2v10a2 2 0 002 2h12a2 2 0 002-2V5a2 2 0 00-2-2H4zm3 2h6v4H7V5zm8 8v2h1v-2h-1zm-2-2H4v4h9v-4z" clipRule="evenodd" />
+                              </svg>
+                              Video Metadata
+                            </h5>
+                            <div className="bg-gray-50 rounded-lg p-4">
+                              <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+                                {analysis.video_metadata.totalDuration && (
+                                  <div>
+                                    <span className="text-gray-600">Duration:</span>
+                                    <p className="font-medium">{analysis.video_metadata.totalDuration}</p>
+                                  </div>
+                                )}
+                                {analysis.video_metadata.totalFrames && (
+                                  <div>
+                                    <span className="text-gray-600">Frames:</span>
+                                    <p className="font-medium">{analysis.video_metadata.totalFrames}</p>
+                                  </div>
+                                )}
+                                {analysis.video_metadata.frameRate && (
+                                  <div>
+                                    <span className="text-gray-600">Frame Rate:</span>
+                                    <p className="font-medium">{analysis.video_metadata.frameRate} fps</p>
+                                  </div>
+                                )}
+                                {analysis.video_metadata.analysisTimestamp && (
+                                  <div>
+                                    <span className="text-gray-600">Analyzed:</span>
+                                    <p className="font-medium">{new Date(analysis.video_metadata.analysisTimestamp).toLocaleDateString()}</p>
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="text-center py-8">
+                  <svg className="mx-auto h-12 w-12 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                  </svg>
+                  <h3 className="mt-2 text-sm font-medium text-gray-900">No content analysis available</h3>
+                  <p className="mt-1 text-sm text-gray-500">
+                    Complete a video analysis to see detailed content breakdowns here.
+                  </p>
+                </div>
               )}
             </div>
           )}

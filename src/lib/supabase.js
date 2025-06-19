@@ -178,8 +178,59 @@ export const updateUserCredits = async (userId, creditsUsed) => {
   return data
 }
 
-// Helper function to save analysis
+// Helper function to save analysis with structured format
 export const saveAnalysis = async (userId, analysisData) => {
+  if (!supabase) {
+    throw new Error('Supabase client not initialized. Please check your environment variables.')
+  }
+  
+  const results = analysisData.results;
+  
+  // Structure the analysis data into separate columns
+  const contentAnalysis = {
+    strategicOverview: results.strategicOverview,
+    contextualAnalysis: results.contextualAnalysis,
+    contentStructure: results.contentStructure,
+    videoCategory: results.videoCategory,
+    standardizedAnalysis: results.standardizedAnalysis
+  };
+  
+  const sceneAnalysis = results.scenes || [];
+  const hookAnalysis = results.hooks || [];
+  const transcriptData = results.transcript || { text: 'No transcript available', segments: [] };
+  const videoMetadata = {
+    ...results.videoMetadata,
+    totalDuration: results.totalDuration,
+    hook: results.hook
+  };
+  
+  const { data, error } = await supabase
+    .from('video_analyses')
+    .insert({
+      user_id: userId,
+      video_url: analysisData.videoUrl,
+      content_analysis: contentAnalysis,
+      scene_analysis: sceneAnalysis,
+      hook_analysis: hookAnalysis,
+      transcript_data: transcriptData,
+      video_metadata: videoMetadata,
+      analysis_data: results, // Keep for backward compatibility
+      credits_used: analysisData.creditsUsed,
+      analysis_version: '2.0',
+      created_at: new Date().toISOString()
+    })
+    .select()
+    .single()
+  
+  if (error) {
+    throw error
+  }
+  
+  return data
+}
+
+// Legacy function for backward compatibility
+export const saveAnalysisLegacy = async (userId, analysisData) => {
   if (!supabase) {
     throw new Error('Supabase client not initialized. Please check your environment variables.')
   }
@@ -191,6 +242,7 @@ export const saveAnalysis = async (userId, analysisData) => {
       video_url: analysisData.videoUrl,
       analysis_data: analysisData.results,
       credits_used: analysisData.creditsUsed,
+      analysis_version: '1.0',
       created_at: new Date().toISOString()
     })
     .select()

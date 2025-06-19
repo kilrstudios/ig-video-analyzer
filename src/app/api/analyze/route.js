@@ -1769,7 +1769,7 @@ async function analyzeVideo(videoPath, userId = null, creditsToDeduct = null, re
       }
     });
 
-    // Deduct user credits if applicable
+    // Save analysis to database and deduct credits if applicable
     if (userId && isSupabaseAvailable()) {
       try {
         // Fallback compute credits if none provided
@@ -1777,6 +1777,36 @@ async function analyzeVideo(videoPath, userId = null, creditsToDeduct = null, re
           const seconds = parseFloat((result.totalDuration || '0').replace(/[^0-9.]/g, '')) || 0;
           creditsToDeduct = Math.max(1, Math.ceil(seconds / 15));
         }
+        
+        // Save structured analysis to database using the new helper function
+        const analysisResult = await supabase.rpc('insert_structured_analysis', {
+          p_user_id: userId,
+          p_video_url: videoPath.includes('/tmp/') ? 'uploaded_video' : videoPath,
+          p_credits_used: creditsToDeduct,
+          p_content_analysis: {
+            strategicOverview: result.strategicOverview,
+            contextualAnalysis: result.contextualAnalysis,
+            contentStructure: result.contentStructure,
+            videoCategory: result.videoCategory,
+            standardizedAnalysis: result.standardizedAnalysis
+          },
+          p_scene_analysis: result.scenes || [],
+          p_hook_analysis: result.hooks || [],
+          p_transcript_data: result.transcript || { text: 'No transcript available', segments: [] },
+          p_video_metadata: {
+            ...result.videoMetadata,
+            totalDuration: result.totalDuration,
+            hook: result.hook
+          },
+          p_legacy_analysis_data: result // Keep full result for backward compatibility
+        });
+        
+        if (analysisResult.error) {
+          logWithTimestamp('⚠️ Failed to save analysis to database', { error: analysisResult.error.message });
+        } else {
+          logWithTimestamp('💾 Analysis saved to database', { analysisId: analysisResult.data });
+        }
+        
         await updateUserCredits(userId, creditsToDeduct);
         logWithTimestamp('💳 Credits deducted', { userId, creditsToDeduct });
       } catch (credErr) {
