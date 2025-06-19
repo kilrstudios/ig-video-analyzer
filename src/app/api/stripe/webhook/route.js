@@ -14,11 +14,24 @@ function getStripeClient() {
 }
 
 function getSupabaseClient() {
-  if (!supabaseClient && process.env.NEXT_PUBLIC_SUPABASE_URL && process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY) {
-    supabaseClient = createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL,
-      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
-    )
+  // Enhanced environment variable detection with Railway fallbacks
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://ndegjkqkerrltuemgydk.supabase.co'
+  const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5kZWdqa3FrZXJybHR1ZW1neWRrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDk4MDU0NTYsImV4cCI6MjA2NTM4MTQ1Nn0.nryVTYXw0gOVjJQMMCfUW6pcVlRgMiLzJYQ2gBkZAHA'
+  
+  console.log('🔍 Environment Variable Debug:')
+  console.log('  NODE_ENV:', process.env.NODE_ENV)
+  console.log('  NEXT_PUBLIC_SUPABASE_URL available:', !!process.env.NEXT_PUBLIC_SUPABASE_URL)
+  console.log('  NEXT_PUBLIC_SUPABASE_ANON_KEY available:', !!process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY)
+  console.log('  Using URL:', supabaseUrl?.substring(0, 30) + '...')
+  console.log('  Using Key length:', supabaseKey?.length)
+
+  if (!supabaseClient && supabaseUrl && supabaseKey) {
+    try {
+      supabaseClient = createClient(supabaseUrl, supabaseKey)
+      console.log('✅ Supabase client created successfully')
+    } catch (error) {
+      console.error('❌ Failed to create Supabase client:', error.message)
+    }
   }
   return supabaseClient
 }
@@ -30,9 +43,14 @@ export async function POST(request) {
     const supabase = getSupabaseClient()
     const endpointSecret = process.env.STRIPE_WEBHOOK_SECRET
 
+    console.log('🚀 Webhook POST handler called')
+    console.log('  Stripe available:', !!stripe)
+    console.log('  Supabase available:', !!supabase)
+    console.log('  Webhook secret available:', !!endpointSecret)
+
     // Check if services are available
     if (!stripe) {
-      console.error('Stripe not initialized - missing STRIPE_SECRET_KEY')
+      console.error('❌ Stripe not initialized - missing STRIPE_SECRET_KEY')
       return NextResponse.json(
         { error: 'Payment service not configured' },
         { status: 503 }
@@ -40,7 +58,8 @@ export async function POST(request) {
     }
 
     if (!supabase) {
-      console.error('Supabase not available - missing environment variables')
+      console.error('❌ Supabase not available - check environment variables')
+      console.error('   Available env vars:', Object.keys(process.env).filter(k => k.includes('SUPABASE')))
       return NextResponse.json(
         { error: 'Database service not available' },
         { status: 503 }
@@ -48,7 +67,7 @@ export async function POST(request) {
     }
 
     if (!endpointSecret) {
-      console.error('Webhook endpoint secret not configured')
+      console.error('❌ Webhook endpoint secret not configured')
       return NextResponse.json(
         { error: 'Webhook not configured' },
         { status: 503 }
@@ -61,8 +80,9 @@ export async function POST(request) {
     let event
     try {
       event = stripe.webhooks.constructEvent(body, signature, endpointSecret)
+      console.log('✅ Webhook signature verified, event type:', event.type)
     } catch (err) {
-      console.error('Webhook signature verification failed:', err.message)
+      console.error('❌ Webhook signature verification failed:', err.message)
       return NextResponse.json(
         { error: 'Webhook signature verification failed' },
         { status: 400 }
@@ -79,13 +99,21 @@ export async function POST(request) {
         const packType = session.metadata.packType
         const tokens = parseInt(session.metadata.tokens)
         
+        console.log('💳 Processing payment completion:', {
+          userId,
+          packType,
+          tokens,
+          sessionId: session.id
+        })
+        
         if (!userId || !tokens) {
-          console.error('Missing metadata in webhook:', session.metadata)
+          console.error('❌ Missing metadata in webhook:', session.metadata)
           return NextResponse.json({ error: 'Missing metadata' }, { status: 400 })
         }
 
         try {
           // Add credits to user's account using the existing function
+          console.log('🔄 Calling add_credits function...')
           const { data, error } = await supabase.rpc('add_credits', {
             user_id: userId,
             credits_to_add: tokens,
@@ -93,31 +121,32 @@ export async function POST(request) {
           })
 
           if (error) {
-            console.error('Failed to add credits:', error)
+            console.error('❌ Failed to add credits:', error)
             return NextResponse.json({ error: 'Failed to add credits' }, { status: 500 })
           }
 
           console.log(`✅ Successfully added ${tokens} tokens to user ${userId}`)
+          console.log('💾 RPC result:', data)
           
         } catch (supabaseError) {
-          console.error('Supabase error in webhook:', supabaseError)
+          console.error('❌ Supabase error in webhook:', supabaseError)
           return NextResponse.json({ error: 'Database error' }, { status: 500 })
         }
         break
 
       case 'payment_intent.payment_failed':
-        console.log('Payment failed:', event.data.object)
+        console.log('💸 Payment failed:', event.data.object.id)
         // Handle failed payment - you could notify the user or log this
         break
 
       default:
-        console.log(`Unhandled event type: ${event.type}`)
+        console.log(`ℹ️ Unhandled event type: ${event.type}`)
     }
 
     return NextResponse.json({ received: true })
 
   } catch (error) {
-    console.error('Webhook error:', error)
+    console.error('💥 Webhook error:', error)
     return NextResponse.json(
       { error: 'Internal server error' },
       { status: 500 }

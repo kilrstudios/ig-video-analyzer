@@ -39,11 +39,25 @@ function getStripeClient() {
 }
 
 function getSupabaseClient() {
-  if (process.env.NEXT_PUBLIC_SUPABASE_URL && process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY) {
-    return createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL,
-      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
-    )
+  // Enhanced environment variable detection with Railway fallbacks
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://ndegjkqkerrltuemgydk.supabase.co'
+  const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5kZWdqa3FrZXJybHR1ZW1neWRrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDk4MDU0NTYsImV4cCI6MjA2NTM4MTQ1Nn0.nryVTYXw0gOVjJQMMCfUW6pcVlRgMiLzJYQ2gBkZAHA'
+  
+  console.log('🔍 Checkout Session Environment Debug:')
+  console.log('  NEXT_PUBLIC_SUPABASE_URL available:', !!process.env.NEXT_PUBLIC_SUPABASE_URL)
+  console.log('  NEXT_PUBLIC_SUPABASE_ANON_KEY available:', !!process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY)
+  console.log('  Using URL:', supabaseUrl?.substring(0, 30) + '...')
+  console.log('  Using Key length:', supabaseKey?.length)
+
+  if (supabaseUrl && supabaseKey) {
+    try {
+      const client = createClient(supabaseUrl, supabaseKey)
+      console.log('✅ Supabase client created successfully for checkout')
+      return client
+    } catch (error) {
+      console.error('❌ Failed to create Supabase client for checkout:', error.message)
+      return null
+    }
   }
   return null
 }
@@ -54,9 +68,13 @@ export async function POST(request) {
     const stripe = getStripeClient()
     const supabase = getSupabaseClient()
 
+    console.log('🛒 Checkout session creation requested')
+    console.log('  Stripe available:', !!stripe)
+    console.log('  Supabase available:', !!supabase)
+
     // Check if services are available
     if (!stripe) {
-      console.error('Stripe not initialized - missing STRIPE_SECRET_KEY')
+      console.error('❌ Stripe not initialized - missing STRIPE_SECRET_KEY')
       return NextResponse.json(
         { error: 'Payment service not configured' },
         { status: 503 }
@@ -64,7 +82,8 @@ export async function POST(request) {
     }
 
     if (!supabase) {
-      console.error('Supabase not available - missing environment variables')
+      console.error('❌ Supabase not available - check environment variables')
+      console.error('   Available env vars:', Object.keys(process.env).filter(k => k.includes('SUPABASE')))
       return NextResponse.json(
         { error: 'Database service not available' },
         { status: 503 }
@@ -72,6 +91,8 @@ export async function POST(request) {
     }
 
     const { packType, userId } = await request.json()
+
+    console.log('📦 Processing checkout request:', { packType, userId })
 
     if (!packType || !userId) {
       return NextResponse.json(
@@ -88,7 +109,10 @@ export async function POST(request) {
       )
     }
 
+    console.log('💰 Selected pack:', pack)
+
     // Verify user exists in our database
+    console.log('👤 Verifying user exists...')
     const { data: user, error: userError } = await supabase
       .from('user_profiles')
       .select('id, email')
@@ -96,13 +120,17 @@ export async function POST(request) {
       .single()
 
     if (userError || !user) {
+      console.error('❌ User verification failed:', userError)
       return NextResponse.json(
         { error: 'User not found' },
         { status: 404 }
       )
     }
 
+    console.log('✅ User verified:', { id: user.id, email: user.email })
+
     // Create Stripe checkout session
+    console.log('🔄 Creating Stripe checkout session...')
     const session = await stripe.checkout.sessions.create({
       payment_method_types: ['card'],
       customer_email: user.email,
@@ -130,10 +158,12 @@ export async function POST(request) {
       },
     })
 
+    console.log('✅ Checkout session created:', session.id)
+
     return NextResponse.json({ sessionId: session.id })
 
   } catch (error) {
-    console.error('Error creating checkout session:', error)
+    console.error('💥 Error creating checkout session:', error)
     return NextResponse.json(
       { error: 'Internal server error' },
       { status: 500 }
