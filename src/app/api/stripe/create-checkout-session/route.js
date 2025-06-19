@@ -65,9 +65,9 @@ function getSupabaseClient() {
 function getSupabaseServiceClient() {
   // Service role client for admin operations
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://ndegjkqkerrltuemgydk.supabase.co'
-  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5kZWdqa3FrZXJybHR1ZW1neWRrIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc0OTgwNTQ1NiwiZXhwIjoyMDY1MzgxNDU2fQ.lHF9_a6eE8CWO1IXYgHuAMoNs3vGaW9sLLcJNp5J7_g'
+  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY
   
-  console.log('🔧 Service Role Key available:', !!process.env.SUPABASE_SERVICE_ROLE_KEY)
+  console.log('🔧 Service Role Key available:', !!serviceRoleKey)
   
   if (supabaseUrl && serviceRoleKey) {
     try {
@@ -84,6 +84,7 @@ function getSupabaseServiceClient() {
       return null
     }
   }
+  console.log('❌ Missing service role key or URL for admin operations')
   return null
 }
 
@@ -156,9 +157,9 @@ export async function POST(request) {
       console.log('🆕 User profile not found, attempting to create it...')
       
       // First, try running the database function to create missing profiles
-      console.log('🔧 Running ensure_user_profiles_exist function...')
+      console.log('🔧 Running create_missing_user_profiles function...')
       try {
-        const { data: functionResult, error: functionError } = await supabase.rpc('ensure_user_profiles_exist')
+        const { data: functionResult, error: functionError } = await supabase.rpc('create_missing_user_profiles')
         if (functionError) {
           console.warn('⚠️ Database function failed:', functionError)
         } else {
@@ -182,38 +183,18 @@ export async function POST(request) {
     }
     
     if (!user) {
-      // Use service role client for auth admin operations
-      const supabaseService = getSupabaseServiceClient()
-      if (!supabaseService) {
-        console.error('❌ Service role client not available')
-        return NextResponse.json(
-          { error: 'Cannot verify user - admin access unavailable' },
-          { status: 503 }
-        )
-      }
+      console.log('🆕 User profile still not found, creating with basic info...')
       
-      // Try to get user info from auth.users using service role
-      const { data: authUser, error: authError } = await supabaseService.auth.admin.getUserById(userId)
-      
-      if (authError || !authUser?.user) {
-        console.error('❌ User not found in auth system:', authError)
-        return NextResponse.json(
-          { error: 'User not found in authentication system' },
-          { status: 404 }
-        )
-      }
-
-      console.log('📧 Found auth user:', { id: authUser.user.id, email: authUser.user.email })
-
-      // Create the missing user profile
+      // Since the user is logged in and we have their userId, create a basic profile
+      // The email will be updated by triggers if available
       const profileData = {
         id: userId,
-        email: authUser.user.email,
-        full_name: authUser.user.user_metadata?.full_name || authUser.user.email?.split('@')[0] || 'User',
+        email: 'unknown@example.com', // Placeholder, will be updated by triggers
+        full_name: 'User',
         credits_balance: 10
       }
 
-      console.log('🆕 Creating missing user profile:', profileData)
+      console.log('🆕 Creating basic user profile:', profileData)
 
       const { data: newProfile, error: createError } = await supabase
         .from('user_profiles')
@@ -227,6 +208,8 @@ export async function POST(request) {
         // If it's a conflict (profile created by trigger), try to fetch it
         if (createError.code === '23505') {
           console.log('🔄 Profile conflict detected, trying to fetch existing...')
+          await new Promise(resolve => setTimeout(resolve, 500)) // Wait for trigger
+          
           const { data: existingProfile, error: fetchError } = await supabase
             .from('user_profiles')
             .select('id, email')
@@ -238,7 +221,7 @@ export async function POST(request) {
             console.log('✅ Found existing profile after conflict:', user)
           } else {
             return NextResponse.json(
-              { error: 'Failed to create or find user profile' },
+              { error: 'User profile creation failed' },
               { status: 500 }
             )
           }
