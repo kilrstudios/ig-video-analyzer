@@ -62,6 +62,31 @@ function getSupabaseClient() {
   return null
 }
 
+function getSupabaseServiceClient() {
+  // Service role client for admin operations
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://ndegjkqkerrltuemgydk.supabase.co'
+  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5kZWdqa3FrZXJybHR1ZW1neWRrIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc0OTgwNTQ1NiwiZXhwIjoyMDY1MzgxNDU2fQ.lHF9_a6eE8CWO1IXYgHuAMoNs3vGaW9sLLcJNp5J7_g'
+  
+  console.log('🔧 Service Role Key available:', !!process.env.SUPABASE_SERVICE_ROLE_KEY)
+  
+  if (supabaseUrl && serviceRoleKey) {
+    try {
+      const client = createClient(supabaseUrl, serviceRoleKey, {
+        auth: {
+          autoRefreshToken: false,
+          persistSession: false
+        }
+      })
+      console.log('✅ Supabase service client created for admin operations')
+      return client
+    } catch (error) {
+      console.error('❌ Failed to create Supabase service client:', error.message)
+      return null
+    }
+  }
+  return null
+}
+
 export async function POST(request) {
   try {
     // Initialize services at runtime
@@ -111,20 +136,137 @@ export async function POST(request) {
 
     console.log('💰 Selected pack:', pack)
 
-    // Verify user exists in our database
+    // Verify user exists in our database, create if missing
     console.log('👤 Verifying user exists...')
-    const { data: user, error: userError } = await supabase
+    let { data: user, error: userError } = await supabase
       .from('user_profiles')
       .select('id, email')
       .eq('id', userId)
-      .single()
+      .maybeSingle()
 
-    if (userError || !user) {
-      console.error('❌ User verification failed:', userError)
+    if (userError && userError.code !== 'PGRST116') {
+      console.error('❌ Database error during user verification:', userError)
       return NextResponse.json(
-        { error: 'User not found' },
-        { status: 404 }
+        { error: 'Database error' },
+        { status: 500 }
       )
+    }
+
+    if (!user) {
+      console.log('🆕 User profile not found, attempting to create it...')
+      
+      // First, try running the database function to create missing profiles
+      console.log('🔧 Running ensure_user_profiles_exist function...')
+      try {
+        const { data: functionResult, error: functionError } = await supabase.rpc('ensure_user_profiles_exist')
+        if (functionError) {
+          console.warn('⚠️ Database function failed:', functionError)
+        } else {
+          console.log('✅ Database function created profiles:', functionResult)
+          
+          // Try to fetch the user profile again after running the function
+          const { data: newUser, error: refetchError } = await supabase
+            .from('user_profiles')
+            .select('id, email')
+            .eq('id', userId)
+            .maybeSingle()
+            
+          if (!refetchError && newUser) {
+            console.log('✅ Profile found after running database function:', newUser)
+            user = newUser
+          }
+        }
+      } catch (funcErr) {
+        console.warn('⚠️ Exception running database function:', funcErr)
+      }
+    }
+    
+    if (!user) {
+      // Use service role client for auth admin operations
+      const supabaseService = getSupabaseServiceClient()
+      if (!supabaseService) {
+        console.error('❌ Service role client not available')
+        return NextResponse.json(
+          { error: 'Cannot verify user - admin access unavailable' },
+          { status: 503 }
+        )
+      }
+      
+      // Try to get user info from auth.users using service role
+      const { data: authUser, error: authError } = await supabaseService.auth.admin.getUserById(userId)
+      
+      if (authError || !authUser?.user) {
+        console.error('❌ User not found in auth system:', authError)
+        return NextResponse.json(
+          { error: 'User not found in authentication system' },
+          { status: 404 }
+        )
+      }
+
+      console.log('📧 Found auth user:', { id: authUser.user.id, email: authUser.user.email })
+
+      // Create the missing user profile
+      const profileData = {
+        id: userId,
+        email: authUser.user.email,
+        full_name: authUser.user.user_metadata?.full_name || authUser.user.email?.split('@')[0] || 'User',
+        credits_balance: 10
+      }
+
+      console.log('🆕 Creating missing user profile:', profileData)
+
+      const { data: newProfile, error: createError } = await supabase
+        .from('user_profiles')
+        .insert(profileData)
+        .select('id, email')
+        .single()
+
+      if (createError) {
+        console.error('❌ Failed to create user profile:', createError)
+        
+        // If it's a conflict (profile created by trigger), try to fetch it
+        if (createError.code === '23505') {
+          console.log('🔄 Profile conflict detected, trying to fetch existing...')
+          const { data: existingProfile, error: fetchError } = await supabase
+            .from('user_profiles')
+            .select('id, email')
+            .eq('id', userId)
+            .single()
+            
+          if (!fetchError && existingProfile) {
+            user = existingProfile
+            console.log('✅ Found existing profile after conflict:', user)
+          } else {
+            return NextResponse.json(
+              { error: 'Failed to create or find user profile' },
+              { status: 500 }
+            )
+          }
+        } else {
+          return NextResponse.json(
+            { error: 'Failed to create user profile' },
+            { status: 500 }
+          )
+        }
+      } else {
+        user = newProfile
+        console.log('✅ Created new user profile:', user)
+
+        // Try to create welcome bonus transaction
+        try {
+          await supabase
+            .from('credit_transactions')
+            .insert({
+              user_id: userId,
+              transaction_type: 'bonus',
+              credits_amount: 10,
+              description: 'Welcome bonus - 10 free credits'
+            })
+          console.log('🎁 Welcome bonus transaction created')
+        } catch (transactionError) {
+          console.warn('⚠️ Failed to create welcome transaction (non-critical):', transactionError)
+        }
+      }
     }
 
     console.log('✅ User verified:', { id: user.id, email: user.email })
