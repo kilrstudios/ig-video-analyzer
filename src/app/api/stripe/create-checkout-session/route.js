@@ -120,6 +120,25 @@ export async function POST(request) {
 
     console.log('📦 Processing checkout request:', { packType, userId })
 
+    // Authenticate the request by getting the auth session
+    console.log('🔐 Verifying user authentication...')
+    const authHeader = request.headers.get('authorization')
+    if (authHeader) {
+      const token = authHeader.replace('Bearer ', '')
+      const { data: { user }, error: authError } = await supabase.auth.getUser(token)
+      
+      if (authError || !user || user.id !== userId) {
+        console.error('❌ Authentication failed:', authError?.message || 'User ID mismatch')
+        return NextResponse.json(
+          { error: 'Authentication required' },
+          { status: 401 }
+        )
+      }
+      console.log('✅ User authenticated:', user.email)
+    } else {
+      console.log('⚠️ No auth header, proceeding without verification (user should exist)')
+    }
+
     if (!packType || !userId) {
       return NextResponse.json(
         { error: 'Missing required fields' },
@@ -137,119 +156,20 @@ export async function POST(request) {
 
     console.log('💰 Selected pack:', pack)
 
-    // Verify user exists in our database, create if missing
-    console.log('👤 Verifying user exists...')
-    let { data: user, error: userError } = await supabase
+    // Verify user exists in our database
+    console.log('👤 Verifying user profile exists...')
+    const { data: user, error: userError } = await supabase
       .from('user_profiles')
       .select('id, email')
       .eq('id', userId)
-      .maybeSingle()
+      .single()
 
-    if (userError && userError.code !== 'PGRST116') {
-      console.error('❌ Database error during user verification:', userError)
+    if (userError) {
+      console.error('❌ User profile not found:', userError)
       return NextResponse.json(
-        { error: 'Database error' },
-        { status: 500 }
+        { error: 'User profile not found. Please sign out and sign back in to refresh your profile.' },
+        { status: 404 }
       )
-    }
-
-    if (!user) {
-      console.log('🆕 User profile not found, attempting to create it...')
-      
-      // First, try running the database function to create missing profiles
-      console.log('🔧 Running create_missing_user_profiles function...')
-      try {
-        const { data: functionResult, error: functionError } = await supabase.rpc('create_missing_user_profiles')
-        if (functionError) {
-          console.warn('⚠️ Database function failed:', functionError)
-        } else {
-          console.log('✅ Database function created profiles:', functionResult)
-          
-          // Try to fetch the user profile again after running the function
-          const { data: newUser, error: refetchError } = await supabase
-            .from('user_profiles')
-            .select('id, email')
-            .eq('id', userId)
-            .maybeSingle()
-            
-          if (!refetchError && newUser) {
-            console.log('✅ Profile found after running database function:', newUser)
-            user = newUser
-          }
-        }
-      } catch (funcErr) {
-        console.warn('⚠️ Exception running database function:', funcErr)
-      }
-    }
-    
-    if (!user) {
-      console.log('🆕 User profile still not found, creating with basic info...')
-      
-      // Since the user is logged in and we have their userId, create a basic profile
-      // The email will be updated by triggers if available
-      const profileData = {
-        id: userId,
-        email: 'unknown@example.com', // Placeholder, will be updated by triggers
-        full_name: 'User',
-        credits_balance: 10
-      }
-
-      console.log('🆕 Creating basic user profile:', profileData)
-
-      const { data: newProfile, error: createError } = await supabase
-        .from('user_profiles')
-        .insert(profileData)
-        .select('id, email')
-        .single()
-
-      if (createError) {
-        console.error('❌ Failed to create user profile:', createError)
-        
-        // If it's a conflict (profile created by trigger), try to fetch it
-        if (createError.code === '23505') {
-          console.log('🔄 Profile conflict detected, trying to fetch existing...')
-          await new Promise(resolve => setTimeout(resolve, 500)) // Wait for trigger
-          
-          const { data: existingProfile, error: fetchError } = await supabase
-            .from('user_profiles')
-            .select('id, email')
-            .eq('id', userId)
-            .single()
-            
-          if (!fetchError && existingProfile) {
-            user = existingProfile
-            console.log('✅ Found existing profile after conflict:', user)
-          } else {
-            return NextResponse.json(
-              { error: 'User profile creation failed' },
-              { status: 500 }
-            )
-          }
-        } else {
-          return NextResponse.json(
-            { error: 'Failed to create user profile' },
-            { status: 500 }
-          )
-        }
-      } else {
-        user = newProfile
-        console.log('✅ Created new user profile:', user)
-
-        // Try to create welcome bonus transaction
-        try {
-          await supabase
-            .from('credit_transactions')
-            .insert({
-              user_id: userId,
-              transaction_type: 'bonus',
-              credits_amount: 10,
-              description: 'Welcome bonus - 10 free credits'
-            })
-          console.log('🎁 Welcome bonus transaction created')
-        } catch (transactionError) {
-          console.warn('⚠️ Failed to create welcome transaction (non-critical):', transactionError)
-        }
-      }
     }
 
     console.log('✅ User verified:', { id: user.id, email: user.email })
