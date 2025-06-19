@@ -158,18 +158,86 @@ export async function POST(request) {
 
     // Verify user exists in our database
     console.log('👤 Verifying user profile exists...')
-    const { data: user, error: userError } = await supabase
+    let { data: user, error: userError } = await supabase
       .from('user_profiles')
       .select('id, email')
       .eq('id', userId)
-      .single()
+      .maybeSingle()
 
-    if (userError) {
-      console.error('❌ User profile not found:', userError)
+    if (userError && userError.code !== 'PGRST116') {
+      console.error('❌ Database error during user verification:', userError)
       return NextResponse.json(
-        { error: 'User profile not found. Please sign out and sign back in to refresh your profile.' },
-        { status: 404 }
+        { error: 'Database error' },
+        { status: 500 }
       )
+    }
+
+    if (!user) {
+      console.log('🆕 User profile missing for authenticated user, creating it...')
+      
+      // First try the database function
+      try {
+        const { data: functionResult, error: functionError } = await supabase.rpc('create_missing_user_profiles')
+        if (!functionError && functionResult > 0) {
+          console.log('✅ Database function created profiles:', functionResult)
+          
+          // Try to fetch the profile again
+          const { data: newUser, error: refetchError } = await supabase
+            .from('user_profiles')
+            .select('id, email')
+            .eq('id', userId)
+            .maybeSingle()
+            
+          if (!refetchError && newUser) {
+            console.log('✅ Profile found after database function:', newUser)
+            user = newUser
+          }
+        }
+      } catch (funcErr) {
+        console.warn('⚠️ Database function failed:', funcErr)
+      }
+      
+      // If still no profile, create one manually (this should work since user is authenticated)
+      if (!user) {
+        console.log('🔧 Creating profile manually for authenticated user...')
+        
+        const { data: createdProfile, error: createError } = await supabase
+          .from('user_profiles')
+          .insert({
+            id: userId,
+            email: 'user@example.com', // Placeholder
+            full_name: 'User',
+            credits_balance: 10
+          })
+          .select('id, email')
+          .single()
+          
+        if (createError) {
+          console.error('❌ Failed to create profile:', createError)
+          return NextResponse.json(
+            { error: 'Unable to create user profile. Please try signing out and back in.' },
+            { status: 500 }
+          )
+        }
+        
+        user = createdProfile
+        console.log('✅ Profile created successfully:', user)
+        
+        // Create welcome transaction
+        try {
+          await supabase
+            .from('credit_transactions')
+            .insert({
+              user_id: userId,
+              transaction_type: 'bonus',
+              credits_amount: 10,
+              description: 'Welcome bonus - 10 free credits'
+            })
+          console.log('🎁 Welcome bonus added')
+        } catch (transErr) {
+          console.warn('⚠️ Welcome transaction failed (non-critical):', transErr)
+        }
+      }
     }
 
     console.log('✅ User verified:', { id: user.id, email: user.email })
